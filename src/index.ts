@@ -26,7 +26,10 @@ const PORT = process.env.PORT || 3000
 // Базовые middleware
 app.use(helmet())
 app.use(cors({
-  origin: ['http://localhost:5173', 'https://slimway.com.kz'],
+  origin: [
+    process.env.FRONTEND_URL || 'http://localhost:5173',
+    'https://slimway.com.kz'
+  ],
   credentials: true
 }))
 app.use(morgan('dev'))
