@@ -17,7 +17,10 @@ router.get('/', async (req: Request, res: Response) => {
   if (branch_id) query = query.eq('branch_id', branch_id)
 
   const { data, error } = await query
-  if (error) return res.status(500).json({ error: error.message })
+  if (error) {
+    console.error('Supabase error:', error)
+    return res.status(500).json({ error: error.message, details: error })
+  }
   return res.json(data)
 })
 
@@ -52,7 +55,10 @@ router.post('/', requireRole('owner', 'franchisee', 'admin'), async (req: Reques
   }
 
   const { data, error } = await supabase.from('subscription_templates').insert(payload).select().single()
-  if (error) return res.status(500).json({ error: error.message })
+  if (error) {
+    console.error('Supabase error:', error)
+    return res.status(500).json({ error: error.message, details: error })
+  }
   return res.status(201).json(data)
 })
 
@@ -68,7 +74,10 @@ router.patch('/:id', requireRole('owner', 'franchisee', 'admin'), async (req: Re
   if (is_active !== undefined)     patch.is_active = is_active
 
   const { data, error } = await supabase.from('subscription_templates').update(patch).eq('id', id).select().single()
-  if (error) return res.status(500).json({ error: error.message })
+  if (error) {
+    console.error('Supabase error:', error)
+    return res.status(500).json({ error: error.message, details: error })
+  }
   return res.json(data)
 })
 
@@ -76,7 +85,10 @@ router.patch('/:id', requireRole('owner', 'franchisee', 'admin'), async (req: Re
 router.delete('/:id', requireRole('owner', 'franchisee', 'admin'), async (req: Request, res: Response) => {
   const { id } = req.params
   const { error } = await supabase.from('subscription_templates').update({ is_active: false }).eq('id', id)
-  if (error) return res.status(500).json({ error: error.message })
+  if (error) {
+    console.error('Supabase error:', error)
+    return res.status(500).json({ error: error.message, details: error })
+  }
   return res.status(204).send()
 })
 

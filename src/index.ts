@@ -124,6 +124,12 @@ app.use((_req, res) => {
   res.status(404).json({ error: 'Route not found', code: 'NOT_FOUND' })
 })
 
+// Global error handler
+app.use((err: any, req: any, res: any, next: any) => {
+  console.error('Unhandled error:', err)
+  res.status(500).json({ error: err.message })
+})
+
 app.listen(PORT, () => {
   console.log(`Slimway backend running on port ${PORT}`)
 })

@@ -20,7 +20,10 @@ router.get('/', async (req: Request, res: Response) => {
 
   const { data, error } = await query
 
-  if (error) return res.status(500).json({ error: error.message })
+  if (error) {
+    console.error('Supabase error:', error)
+    return res.status(500).json({ error: error.message, details: error })
+  }
   return res.json(data)
 })
 
@@ -57,7 +60,10 @@ router.post('/', requireRole('owner', 'franchisee', 'admin'), async (req: Reques
     .select()
     .single()
 
-  if (error) return res.status(500).json({ error: error.message })
+  if (error) {
+    console.error('Supabase error:', error)
+    return res.status(500).json({ error: error.message, details: error })
+  }
   return res.status(201).json(data)
 })
 
@@ -73,7 +79,10 @@ router.patch('/:id', requireRole('owner', 'franchisee', 'admin'), async (req: Re
     .select()
     .single()
 
-  if (error) return res.status(500).json({ error: error.message })
+  if (error) {
+    console.error('Supabase error:', error)
+    return res.status(500).json({ error: error.message, details: error })
+  }
   return res.json(data)
 })
 
@@ -86,7 +95,10 @@ router.delete('/:id', requireRole('owner', 'franchisee', 'admin'), async (req: R
     .update({ is_deleted: true })
     .eq('id', id)
 
-  if (error) return res.status(500).json({ error: error.message })
+  if (error) {
+    console.error('Supabase error:', error)
+    return res.status(500).json({ error: error.message, details: error })
+  }
   return res.status(204).send()
 })
 
