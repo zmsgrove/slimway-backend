@@ -1,0 +1,93 @@
+import { Router, Request, Response } from 'express'
+import { supabase } from '../config/supabase'
+import { requireRole } from '../middleware/role.middleware'
+
+const router = Router()
+
+// GET /clients — список клиентов филиала
+router.get('/', async (req: Request, res: Response) => {
+  const { branch_id } = req.user!
+  const { search } = req.query
+
+  let query = supabase
+    .from('clients')
+    .select('*, memberships(id, status, end_date, used_sessions, total_sessions)')
+    .eq('is_deleted', false)
+    .order('created_at', { ascending: false })
+
+  if (branch_id) query = query.eq('branch_id', branch_id)
+  if (search) query = query.ilike('full_name', `%${search}%`)
+
+  const { data, error } = await query
+
+  if (error) return res.status(500).json({ error: error.message })
+  return res.json(data)
+})
+
+// GET /clients/:id — карточка клиента
+router.get('/:id', async (req: Request, res: Response) => {
+  const { id } = req.params
+  const { branch_id } = req.user!
+
+  let query = supabase
+    .from('clients')
+    .select('*, memberships(*), bookings(*, schedule(*))')
+    .eq('id', id)
+    .eq('is_deleted', false)
+    .single()
+
+  if (branch_id) query = (query as any).eq('branch_id', branch_id)
+
+  const { data, error } = await query
+
+  if (error) return res.status(404).json({ error: 'Client not found', code: 'NOT_FOUND' })
+  return res.json(data)
+})
+
+// POST /clients — создать клиента
+router.post('/', requireRole('owner', 'franchisee', 'admin'), async (req: Request, res: Response) => {
+  const { branch_id } = req.user!
+  const { full_name, phone, email, birth_date, notes } = req.body
+
+  if (!full_name) return res.status(400).json({ error: 'full_name is required', code: 'VALIDATION_ERROR' })
+
+  const { data, error } = await supabase
+    .from('clients')
+    .insert({ full_name, phone, email, birth_date, notes, branch_id })
+    .select()
+    .single()
+
+  if (error) return res.status(500).json({ error: error.message })
+  return res.status(201).json(data)
+})
+
+// PATCH /clients/:id — обновить клиента
+router.patch('/:id', requireRole('owner', 'franchisee', 'admin'), async (req: Request, res: Response) => {
+  const { id } = req.params
+  const { full_name, phone, email, birth_date, notes } = req.body
+
+  const { data, error } = await supabase
+    .from('clients')
+    .update({ full_name, phone, email, birth_date, notes })
+    .eq('id', id)
+    .select()
+    .single()
+
+  if (error) return res.status(500).json({ error: error.message })
+  return res.json(data)
+})
+
+// DELETE /clients/:id — soft delete
+router.delete('/:id', requireRole('owner', 'franchisee', 'admin'), async (req: Request, res: Response) => {
+  const { id } = req.params
+
+  const { error } = await supabase
+    .from('clients')
+    .update({ is_deleted: true })
+    .eq('id', id)
+
+  if (error) return res.status(500).json({ error: error.message })
+  return res.status(204).send()
+})
+
+export default router
