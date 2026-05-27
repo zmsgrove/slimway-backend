@@ -16,6 +16,7 @@ import devicesRouter from './routes/devices.routes'
 import subscriptionsRouter from './routes/subscriptions.routes'
 import scheduleSlotsRouter from './routes/schedule-slots.routes'
 import bookingsV2Router from './routes/bookings-v2.routes'
+import subscriptionTemplatesRouter from './routes/subscription-templates.routes'
 
 dotenv.config()
 
@@ -25,7 +26,7 @@ const PORT = process.env.PORT || 3000
 // Базовые middleware
 app.use(helmet())
 app.use(cors({
-  origin: process.env.FRONTEND_URL || 'http://localhost:5173',
+  origin: ['http://localhost:5173', 'https://slimway.com.kz'],
   credentials: true
 }))
 app.use(morgan('dev'))
@@ -34,6 +35,48 @@ app.use(express.json())
 // Health check
 app.get('/health', (_req, res) => {
   res.json({ status: 'ok', version: '1.0.0' })
+})
+
+// Wazzup proxy — публичный роут (без авторизации)
+app.post('/api/wazzup-proxy', async (req, res) => {
+  try {
+    const { phone, message } = req.body
+    if (!phone || !message) {
+      return res.status(400).json({ error: 'phone and message required' })
+    }
+
+    // Получаем channelId
+    const channelsRes = await fetch('https://api.wazzup24.com/v3/channels', {
+      headers: { 'Authorization': `Bearer ${process.env.WAZZUP_API_KEY}` }
+    })
+    const channelsData = await channelsRes.json() as any[]
+    const channel = channelsData.find((c: any) =>
+      c.transport === 'whatsapp' && c.state === 'active'
+    )
+    if (!channel) {
+      return res.status(500).json({ error: 'No active WhatsApp channel' })
+    }
+
+    // Отправляем сообщение
+    const msgRes = await fetch('https://api.wazzup24.com/v3/message', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${process.env.WAZZUP_API_KEY}`
+      },
+      body: JSON.stringify({
+        channelId: channel.id,
+        chatType: 'whatsapp',
+        chatId: phone,
+        text: message
+      })
+    })
+
+    const msgData = await msgRes.json()
+    return res.json({ ok: true, data: msgData })
+  } catch (e: any) {
+    return res.status(500).json({ error: e.message })
+  }
 })
 
 // Все API-роуты защищены авторизацией и резолвером филиала
@@ -48,6 +91,7 @@ app.use('/api/v1/devices', devicesRouter)
 app.use('/api/v1/subscriptions', subscriptionsRouter)
 app.use('/api/v1/schedule-slots', scheduleSlotsRouter)
 app.use('/api/v1/bookings-v2', bookingsV2Router)
+app.use('/api/v1/subscription-templates', subscriptionTemplatesRouter)
 
 // 404
 app.use((_req, res) => {
