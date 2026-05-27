@@ -12,6 +12,10 @@ import membershipsRouter from './routes/memberships.routes'
 import scheduleRouter from './routes/schedule.routes'
 import bookingsRouter from './routes/bookings.routes'
 import branchesRouter from './routes/branches.routes'
+import devicesRouter from './routes/devices.routes'
+import subscriptionsRouter from './routes/subscriptions.routes'
+import scheduleSlotsRouter from './routes/schedule-slots.routes'
+import bookingsV2Router from './routes/bookings-v2.routes'
 
 dotenv.config()
 
@@ -40,6 +44,10 @@ app.use('/api/v1/memberships', membershipsRouter)
 app.use('/api/v1/schedule', scheduleRouter)
 app.use('/api/v1/bookings', bookingsRouter)
 app.use('/api/v1/branches', branchesRouter)
+app.use('/api/v1/devices', devicesRouter)
+app.use('/api/v1/subscriptions', subscriptionsRouter)
+app.use('/api/v1/schedule-slots', scheduleSlotsRouter)
+app.use('/api/v1/bookings-v2', bookingsV2Router)
 
 // 404
 app.use((_req, res) => {
