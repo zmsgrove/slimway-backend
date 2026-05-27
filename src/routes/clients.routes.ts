@@ -1,6 +1,7 @@
 import { Router, Request, Response } from 'express'
 import { supabase } from '../config/supabase'
 import { requireRole } from '../middleware/role.middleware'
+import { resolveBranchId } from '../utils/resolveBranchId'
 
 const router = Router()
 
@@ -49,14 +50,14 @@ router.get('/:id', async (req: Request, res: Response) => {
 
 // POST /clients — создать клиента
 router.post('/', requireRole('owner', 'franchisee', 'admin'), async (req: Request, res: Response) => {
-  const { branch_id } = req.user!
+  const branchId = await resolveBranchId(req.user!)
   const { full_name, phone, email, birth_date, notes } = req.body
 
   if (!full_name) return res.status(400).json({ error: 'full_name is required', code: 'VALIDATION_ERROR' })
 
   const { data, error } = await supabase
     .from('clients')
-    .insert({ full_name, phone, email, birth_date, notes, branch_id })
+    .insert({ full_name, phone, email, birth_date, notes, branch_id: branchId })
     .select()
     .single()
 

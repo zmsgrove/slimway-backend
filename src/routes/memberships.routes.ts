@@ -1,6 +1,7 @@
 import { Router, Request, Response } from 'express'
 import { supabase } from '../config/supabase'
 import { requireRole } from '../middleware/role.middleware'
+import { resolveBranchId } from '../utils/resolveBranchId'
 
 const router = Router()
 
@@ -25,7 +26,7 @@ router.get('/', async (req: Request, res: Response) => {
 
 // POST /memberships — создать абонемент
 router.post('/', requireRole('owner', 'franchisee', 'admin'), async (req: Request, res: Response) => {
-  const { branch_id } = req.user!
+  const branchId = await resolveBranchId(req.user!)
   const { client_id, type, total_sessions, start_date, end_date, price } = req.body
 
   if (!client_id || !type || !start_date) {
@@ -34,7 +35,7 @@ router.post('/', requireRole('owner', 'franchisee', 'admin'), async (req: Reques
 
   const { data, error } = await supabase
     .from('memberships')
-    .insert({ client_id, branch_id, type, total_sessions, start_date, end_date, price, status: 'active' })
+    .insert({ client_id, branch_id: branchId, type, total_sessions, start_date, end_date, price, status: 'active' })
     .select()
     .single()
 

@@ -1,13 +1,14 @@
 import { Router, Request, Response } from 'express'
 import { supabase } from '../config/supabase'
 import { requireRole } from '../middleware/role.middleware'
+import { resolveBranchId } from '../utils/resolveBranchId'
 
 const router = Router()
 
 // POST /bookings-v2 — забронировать слоты
 // Body: { client_id, subscription_id, slot_1_schedule_slot_id, date }
 router.post('/', requireRole('owner', 'franchisee', 'admin'), async (req: Request, res: Response) => {
-  const { branch_id, id: created_by } = req.user!
+  const [branchId, created_by] = [await resolveBranchId(req.user!), req.user!.id]
   const { client_id, subscription_id, slot_1_schedule_slot_id, date } = req.body
 
   if (!client_id || !subscription_id || !slot_1_schedule_slot_id || !date) {
@@ -50,7 +51,7 @@ router.post('/', requireRole('owner', 'franchisee', 'admin'), async (req: Reques
     const { data: devicesOfType } = await supabase
       .from('devices')
       .select('id')
-      .eq('branch_id', branch_id ?? sub.branch_id)
+      .eq('branch_id', branchId ?? sub.branch_id)
       .eq('type', sub.slot_2_type)
       .eq('status', 'active')
 
@@ -107,7 +108,7 @@ router.post('/', requireRole('owner', 'franchisee', 'admin'), async (req: Reques
     .insert({
       client_id,
       subscription_id,
-      branch_id: branch_id ?? sub.branch_id,
+      branch_id: branchId ?? sub.branch_id,
       date,
       slot_1_schedule_slot_id,
       slot_2_schedule_slot_id: slot2Id,

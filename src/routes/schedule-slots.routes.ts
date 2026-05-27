@@ -1,6 +1,7 @@
 import { Router, Request, Response } from 'express'
 import { supabase } from '../config/supabase'
 import { requireRole } from '../middleware/role.middleware'
+import { resolveBranchId } from '../utils/resolveBranchId'
 
 const router = Router()
 
@@ -25,7 +26,7 @@ router.get('/', async (req: Request, res: Response) => {
 
 // POST /schedule-slots — создать ячейку
 router.post('/', requireRole('owner', 'franchisee', 'admin'), async (req: Request, res: Response) => {
-  const { branch_id } = req.user!
+  const branchId = await resolveBranchId(req.user!)
   const { device_id, date, time_start, time_end, status } = req.body
 
   if (!device_id || !date || !time_start || !time_end) {
@@ -37,7 +38,7 @@ router.post('/', requireRole('owner', 'franchisee', 'admin'), async (req: Reques
 
   const { data, error } = await supabase
     .from('schedule_slots')
-    .insert({ branch_id, device_id, date, time_start, time_end, status: status ?? 'free' })
+    .insert({ branch_id: branchId, device_id, date, time_start, time_end, status: status ?? 'free' })
     .select('*, devices(id, type, number, device_group, status)')
     .single()
 

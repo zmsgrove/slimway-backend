@@ -1,6 +1,7 @@
 import { Router, Request, Response } from 'express'
 import { supabase } from '../config/supabase'
 import { requireRole } from '../middleware/role.middleware'
+import { resolveBranchId } from '../utils/resolveBranchId'
 
 const router = Router()
 
@@ -26,7 +27,7 @@ router.get('/', async (req: Request, res: Response) => {
 
 // POST /subscription-templates — создать шаблон
 router.post('/', requireRole('owner', 'franchisee', 'admin'), async (req: Request, res: Response) => {
-  const { branch_id } = req.user!
+  const branchId = await resolveBranchId(req.user!)
   const {
     name,
     slot_1_type, slot_1_duration_min, slot_1_sessions_total,
@@ -39,7 +40,7 @@ router.post('/', requireRole('owner', 'franchisee', 'admin'), async (req: Reques
   }
 
   const payload: Record<string, unknown> = {
-    branch_id,
+    branch_id: branchId,
     name,
     slot_1_type,
     slot_1_duration_min,

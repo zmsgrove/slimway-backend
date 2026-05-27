@@ -1,6 +1,7 @@
 import { Router, Request, Response } from 'express'
 import { supabase } from '../config/supabase'
 import { requireRole } from '../middleware/role.middleware'
+import { resolveBranchId } from '../utils/resolveBranchId'
 
 const router = Router()
 
@@ -33,10 +34,10 @@ router.get('/', async (req: Request, res: Response) => {
 router.post('/', requireRole('owner', 'franchisee', 'admin'), async (req: Request, res: Response) => {
   try {
     console.log('POST /devices req.user:', JSON.stringify(req.user))
-    const { branch_id } = req.user!
+    const branchId = await resolveBranchId(req.user!)
     const { type, number, device_group, status } = req.body
 
-    if (!branch_id) {
+    if (!branchId) {
       return res.status(400).json({ error: 'branch_id not found in token. Check app_metadata.branch_id in Supabase Auth.', code: 'NO_BRANCH_ID' })
     }
 
@@ -46,7 +47,7 @@ router.post('/', requireRole('owner', 'franchisee', 'admin'), async (req: Reques
 
     const { data, error } = await supabase
       .from('devices')
-      .insert({ branch_id, type, number, device_group, status: status ?? 'active' })
+      .insert({ branch_id: branchId, type, number, device_group, status: status ?? 'active' })
       .select()
       .single()
 
