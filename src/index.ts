@@ -40,48 +40,6 @@ app.get('/health', (_req, res) => {
   res.json({ status: 'ok', version: '1.0.0' })
 })
 
-// Wazzup proxy — публичный роут (без авторизации)
-app.post('/api/wazzup-proxy', async (req, res) => {
-  try {
-    const { phone, message } = req.body
-    if (!phone || !message) {
-      return res.status(400).json({ error: 'phone and message required' })
-    }
-
-    // Получаем channelId
-    const channelsRes = await fetch('https://api.wazzup24.com/v3/channels', {
-      headers: { 'Authorization': `Bearer ${process.env.WAZZUP_API_KEY}` }
-    })
-    const channelsData = await channelsRes.json() as any[]
-    const channel = channelsData.find((c: any) =>
-      c.transport === 'whatsapp' && c.state === 'active'
-    )
-    if (!channel) {
-      return res.status(500).json({ error: 'No active WhatsApp channel' })
-    }
-
-    // Отправляем сообщение
-    const msgRes = await fetch('https://api.wazzup24.com/v3/message', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'Authorization': `Bearer ${process.env.WAZZUP_API_KEY}`
-      },
-      body: JSON.stringify({
-        channelId: channel.id,
-        chatType: 'whatsapp',
-        chatId: phone,
-        text: message
-      })
-    })
-
-    const msgData = await msgRes.json()
-    return res.json({ ok: true, data: msgData })
-  } catch (e: any) {
-    return res.status(500).json({ error: e.message })
-  }
-})
-
 // Tilda CRM proxy
 app.post('/api/tilda-proxy', async (req, res) => {
   try {
@@ -102,6 +60,50 @@ app.post('/api/tilda-proxy', async (req, res) => {
     return res.status(500).json({ error: e.message });
   }
 });
+
+
+// Wazzup proxy — публичный роут (без авторизации)
+app.post('/api/wazzup-proxy', async (req, res) => {
+  try {
+    const { phone, message } = req.body
+    console.log('Wazzup request - phone:', phone)
+    
+    const channelsRes = await fetch('https://api.wazzup24.com/v3/channels', {
+      headers: { 'Authorization': `Bearer ${process.env.WAZZUP_API_KEY}` }
+    })
+    const channelsData = await channelsRes.json() as any[]
+    console.log('Channels:', JSON.stringify(channelsData))
+    
+    const channel = channelsData.find((c: any) =>
+      c.transport === 'whatsapp' && c.state === 'active'
+    )
+    console.log('Selected channel:', JSON.stringify(channel))
+    
+    if (!channel) {
+      return res.status(500).json({ error: 'No active WhatsApp channel' })
+    }
+
+    const msgRes = await fetch('https://api.wazzup24.com/v3/message', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${process.env.WAZZUP_API_KEY}`
+      },
+      body: JSON.stringify({
+        channelId: channel.id,
+        chatType: 'whatsapp',
+        chatId: phone,
+        text: message
+      })
+    })
+    const msgData = await msgRes.json()
+    console.log('Wazzup response:', JSON.stringify(msgData))
+    return res.json({ ok: true, data: msgData })
+  } catch (e: any) {
+    console.log('Wazzup error:', e.message)
+    return res.status(500).json({ error: e.message })
+  }
+})
 
 // Все API-роуты защищены авторизацией и резолвером филиала
 app.use('/api/v1', requireAuth, resolveBranch)
