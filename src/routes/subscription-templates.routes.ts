@@ -1,8 +1,6 @@
 import { Router, Request, Response } from 'express'
 import { supabase } from '../config/supabase'
 import { requireRole } from '../middleware/role.middleware'
-import { resolveBranchId } from '../utils/resolveBranchId'
-
 const router = Router()
 
 // GET /subscription-templates — шаблоны абонементов филиала
@@ -27,7 +25,21 @@ router.get('/', async (req: Request, res: Response) => {
 
 // POST /subscription-templates — создать шаблон
 router.post('/', requireRole('owner', 'franchisee', 'admin'), async (req: Request, res: Response) => {
-  const branchId = await resolveBranchId(req.user!)
+  let branchId = req.user!.branch_id
+
+  if (!branchId) {
+    const { data: branch } = await supabase
+      .from('branches')
+      .select('id')
+      .eq('owner_id', req.user!.id)
+      .single()
+    branchId = branch?.id
+  }
+
+  if (!branchId) {
+    return res.status(400).json({ error: 'No branch found', code: 'NO_BRANCH' })
+  }
+
   const {
     name,
     slot_1_type, slot_1_duration_min, slot_1_sessions_total,
