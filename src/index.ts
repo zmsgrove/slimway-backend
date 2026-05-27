@@ -82,6 +82,27 @@ app.post('/api/wazzup-proxy', async (req, res) => {
   }
 })
 
+// Tilda CRM proxy
+app.post('/api/tilda-proxy', async (req, res) => {
+  try {
+    const body = req.body;
+    const fd = new URLSearchParams();
+    Object.keys(body).forEach(key => fd.append(key, body[key]));
+    fd.append('formid', '2317076783');
+    fd.append('formservices[]', '76565d0fb10b1315f77b7c477956d95e');
+
+    const response = await fetch('https://slimway.com.kz/tilda/form2317076783/callback/', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: fd.toString()
+    });
+    const data = await response.text();
+    return res.json({ ok: true, data });
+  } catch (e: any) {
+    return res.status(500).json({ error: e.message });
+  }
+});
+
 // Все API-роуты защищены авторизацией и резолвером филиала
 app.use('/api/v1', requireAuth, resolveBranch)
 
