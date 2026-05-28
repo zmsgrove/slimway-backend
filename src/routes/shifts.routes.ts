@@ -53,6 +53,57 @@ router.post('/', requireRole('owner', 'franchisee', 'admin'), async (req: Reques
   }
 })
 
+// POST /shifts/bulk — массовое создание смен (upsert, пропускает существующие)
+router.post('/bulk', requireRole('owner', 'franchisee', 'admin'), async (req: Request, res: Response) => {
+  try {
+    const branchId = await resolveBranchId(req.user!)
+    if (!branchId) return res.status(400).json({ error: 'No branch found', code: 'NO_BRANCH' })
+
+    const { shifts } = req.body as {
+      shifts?: Array<{ employee_id: string; date: string; time_start: string; time_end: string; status?: string }>
+    }
+    if (!Array.isArray(shifts) || shifts.length === 0) {
+      return res.status(400).json({ error: 'shifts array required', code: 'VALIDATION_ERROR' })
+    }
+
+    // Find existing shifts to avoid duplicates
+    const employeeIds = [...new Set(shifts.map(s => s.employee_id))]
+    const dates       = [...new Set(shifts.map(s => s.date))]
+
+    const { data: existing } = await supabase
+      .from('shifts')
+      .select('employee_id, date')
+      .in('employee_id', employeeIds)
+      .in('date', dates)
+
+    const existingKeys = new Set((existing ?? []).map(e => `${e.employee_id}|${e.date}`))
+
+    const toInsert = shifts
+      .filter(s => !existingKeys.has(`${s.employee_id}|${s.date}`))
+      .map(s => ({
+        branch_id:   branchId,
+        employee_id: s.employee_id,
+        date:        s.date,
+        time_start:  s.time_start,
+        time_end:    s.time_end,
+        status:      s.status ?? 'scheduled',
+      }))
+
+    if (toInsert.length === 0) return res.json([])
+
+    const { data, error } = await supabase
+      .from('shifts')
+      .insert(toInsert)
+      .select('*, employees(id, full_name, position)')
+
+    if (error) return res.status(500).json({ error: error.message })
+    return res.status(201).json(data)
+  } catch (e: unknown) {
+    const msg = e instanceof Error ? e.message : 'Internal server error'
+    return res.status(500).json({ error: msg })
+  }
+})
+
 // PATCH /shifts/:id
 router.patch('/:id', requireRole('owner', 'franchisee', 'admin'), async (req: Request, res: Response) => {
   try {
