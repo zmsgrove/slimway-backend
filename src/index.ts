@@ -56,9 +56,14 @@ fd.append('tildaspec-phone-part[0]-iso', 'KZ');
 fd.append('tildaspec-phone-part[0]', phoneClean);
 fd.set('Phone', phoneClean);
 console.log('Tilda body:', fd.toString());
-    const response = await fetch('https://forms.tildaapi.pro/procces/', {
+const response = await fetch('https://forms.tildaapi.pro/procces/', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      headers: { 
+        'Content-Type': 'application/x-www-form-urlencoded',
+        'Referer': 'https://slimway.com.kz/analiz',
+        'Origin': 'https://slimway.com.kz',
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
+      },
       body: fd.toString()
     });
     const data = await response.text();
