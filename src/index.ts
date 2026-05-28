@@ -53,7 +53,7 @@ app.post('/api/tilda-proxy', async (req, res) => {
     fd.append('form-spec-comments', 'Its good');
     fd.append('tildaspec-phone-part[]-iso', 'KZ');
     fd.append('tildaspec-phone-part[]', body.Phone || '');
-
+console.log('Tilda body:', fd.toString());
     const response = await fetch('https://forms.tildaapi.pro/procces/', {
       method: 'POST',
       headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
