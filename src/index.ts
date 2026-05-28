@@ -51,8 +51,10 @@ app.post('/api/tilda-proxy', async (req, res) => {
     fd.append('formid', '2317076783');
     fd.append('formservices[]', '76565d0fb10b1315f77b7c477956d95e');
     fd.append('form-spec-comments', 'Its good');
-    fd.append('tildaspec-phone-part[]-iso', 'KZ');
-    fd.append('tildaspec-phone-part[]', body.Phone || '');
+var phoneClean = (body.Phone || '').replace(/[^0-9]/g, '');
+fd.append('tildaspec-phone-part[0]-iso', 'KZ');
+fd.append('tildaspec-phone-part[0]', phoneClean);
+fd.set('Phone', phoneClean);
 console.log('Tilda body:', fd.toString());
     const response = await fetch('https://forms.tildaapi.pro/procces/', {
       method: 'POST',
