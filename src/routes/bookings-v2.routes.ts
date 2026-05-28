@@ -37,7 +37,8 @@ router.post('/', requireRole('owner', 'franchisee', 'admin'), async (req: Reques
     .single()
 
   if (slot1Err || !slot1) return res.status(404).json({ error: 'Slot 1 not found', code: 'SLOT_NOT_FOUND' })
-  if (slot1.status !== 'free') return res.status(409).json({ error: 'Slot 1 is not free', code: 'SLOT_BUSY' })
+  console.log('slot1 status check:', { id: slot_1_schedule_slot_id, status: slot1.status, slot1 })
+  if (slot1.status !== 'free') return res.status(409).json({ error: 'Slot 1 is not free', code: 'SLOT_BUSY', slot_status: slot1.status })
 
   // 3. Если абонемент двухслотовый — ищем слот 2
   let slot2Id: string | null = null
@@ -117,7 +118,14 @@ router.post('/', requireRole('owner', 'franchisee', 'admin'), async (req: Reques
     .select()
     .single()
 
-  if (bookErr || !booking) return res.status(500).json({ error: bookErr?.message ?? 'Booking failed' })
+  if (bookErr || !booking) {
+    console.log('booking conflict:', bookErr)
+    // unique constraint violation — slot already booked
+    if (bookErr?.code === '23505') {
+      return res.status(409).json({ error: 'Slot already booked (unique conflict)', code: 'SLOT_CONFLICT', detail: bookErr.details })
+    }
+    return res.status(500).json({ error: bookErr?.message ?? 'Booking failed', code: bookErr?.code })
+  }
 
   // 5. Блокируем слоты
   await supabase
