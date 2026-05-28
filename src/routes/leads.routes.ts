@@ -6,55 +6,76 @@ const router = Router()
 
 // GET /leads — список лидов филиала
 router.get('/', async (req: Request, res: Response) => {
-  const { branch_id } = req.user!
-  const { status, archived } = req.query
+  try {
+    const { branch_id } = req.user!
+    const { status, archived } = req.query
 
-  let query = supabase
-    .from('leads')
-    .select('*, lead_comments(id)')
-    .order('created_at', { ascending: false })
+    let query = supabase
+      .from('leads')
+      .select('*, lead_comments(id)')
+      .order('created_at', { ascending: false })
 
-  if (branch_id) query = query.eq('branch_id', branch_id)
+    if (branch_id) query = query.eq('branch_id', branch_id)
 
-  if (archived === 'true') {
-    query = query.not('archived_at', 'is', null)
-  } else {
-    query = query.is('archived_at', null)
+    if (archived === 'true') {
+      query = query.not('archived_at', 'is', null)
+    } else {
+      query = query.is('archived_at', null)
+    }
+
+    if (status) query = query.eq('status', status as string)
+
+    const { data, error } = await query
+    if (error) {
+      console.error('[leads GET /]', error)
+      return res.status(500).json({ error: error.message, code: error.code })
+    }
+    return res.json(data)
+  } catch (e: unknown) {
+    console.error('[leads GET / catch]', e)
+    const msg = e instanceof Error ? e.message : 'Internal server error'
+    return res.status(500).json({ error: msg })
   }
-
-  if (status) query = query.eq('status', status as string)
-
-  const { data, error } = await query
-  if (error) return res.status(500).json({ error: error.message })
-  return res.json(data)
 })
 
 // POST /leads — создать лид
 router.post('/', async (req: Request, res: Response) => {
-  const branchId = await resolveBranchId(req.user!)
-  const { full_name, phone, source, notes, assigned_to } = req.body
+  try {
+    const branchId = await resolveBranchId(req.user!)
+    const { full_name, phone, source, notes, assigned_to } = req.body
 
-  if (!full_name) {
-    return res.status(400).json({ error: 'full_name required', code: 'VALIDATION_ERROR' })
+    if (!full_name) {
+      return res.status(400).json({ error: 'full_name required', code: 'VALIDATION_ERROR' })
+    }
+    if (!branchId) {
+      return res.status(400).json({ error: 'No branch resolved. Pass ?branch_id= for developer/owner.', code: 'NO_BRANCH' })
+    }
+
+    const { data, error } = await supabase
+      .from('leads')
+      .insert({
+        branch_id: branchId,
+        full_name,
+        phone: phone || null,
+        source: source || 'manual',
+        notes: notes || null,
+        assigned_to: assigned_to || null,
+        created_by: req.user!.id,
+        status: 'new',
+      })
+      .select()
+      .single()
+
+    if (error) {
+      console.error('[leads POST /]', error)
+      return res.status(500).json({ error: error.message, code: error.code })
+    }
+    return res.status(201).json(data)
+  } catch (e: unknown) {
+    console.error('[leads POST / catch]', e)
+    const msg = e instanceof Error ? e.message : 'Internal server error'
+    return res.status(500).json({ error: msg })
   }
-
-  const { data, error } = await supabase
-    .from('leads')
-    .insert({
-      branch_id: branchId,
-      full_name,
-      phone: phone || null,
-      source: source || 'manual',
-      notes: notes || null,
-      assigned_to: assigned_to || null,
-      created_by: req.user!.id,
-      status: 'new',
-    })
-    .select()
-    .single()
-
-  if (error) return res.status(500).json({ error: error.message })
-  return res.status(201).json(data)
 })
 
 // GET /leads/:id — один лид с комментариями

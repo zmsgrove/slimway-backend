@@ -11,5 +11,14 @@ export async function resolveBranchId(user: AuthUser): Promise<string | null> {
       .single()
     return branch?.id ?? null
   }
+  if (user.role === 'developer') {
+    // developer без явного branch_id берёт первый доступный филиал
+    const { data: branch } = await supabase
+      .from('branches')
+      .select('id')
+      .limit(1)
+      .single()
+    return branch?.id ?? null
+  }
   return null
 }
