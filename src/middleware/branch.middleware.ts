@@ -9,8 +9,8 @@ export function resolveBranch(req: Request, res: Response, next: NextFunction) {
 
   const { role, branch_id } = req.user
 
-  if (role === 'owner') {
-    // owner может смотреть любой филиал через query param
+  if (role === 'developer' || role === 'owner') {
+    // developer и owner могут смотреть любой филиал через query param
     const queryBranch = req.query.branch_id as string | undefined
     req.user.branch_id = queryBranch || null
   } else {

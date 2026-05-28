@@ -6,6 +6,7 @@ export function requireRole(...roles: Role[]) {
     if (!req.user) {
       return res.status(401).json({ error: 'Unauthorized', code: 'NO_USER' })
     }
+    if (req.user.role === 'developer') return next()
     if (!roles.includes(req.user.role)) {
       return res.status(403).json({ error: 'Forbidden', code: 'INSUFFICIENT_ROLE' })
     }
