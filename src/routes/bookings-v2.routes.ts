@@ -156,6 +156,42 @@ router.post('/', requireRole('owner', 'franchisee', 'admin'), async (req: Reques
   return res.status(201).json(booking)
 })
 
+// GET /bookings-v2/:id — детали брони с клиентом, абонементом, слотами
+router.get('/:id', requireRole('owner', 'franchisee', 'admin'), async (req: Request, res: Response) => {
+  try {
+    const { id } = req.params
+
+    const { data: booking, error: bookErr } = await supabase
+      .from('bookings_v2')
+      .select('*')
+      .eq('id', id)
+      .single()
+
+    if (bookErr || !booking) return res.status(404).json({ error: 'Booking not found', code: 'NOT_FOUND' })
+
+    const [{ data: client }, { data: sub }, { data: slot1 }] = await Promise.all([
+      supabase.from('clients').select('id, full_name, phone').eq('id', booking.client_id).single(),
+      supabase.from('subscriptions').select('id, name').eq('id', booking.subscription_id).single(),
+      supabase.from('schedule_slots').select('*, devices(*)').eq('id', booking.slot_1_schedule_slot_id).single(),
+    ])
+
+    let slot2 = null
+    if (booking.slot_2_schedule_slot_id) {
+      const { data } = await supabase
+        .from('schedule_slots')
+        .select('*, devices(*)')
+        .eq('id', booking.slot_2_schedule_slot_id)
+        .single()
+      slot2 = data
+    }
+
+    return res.json({ booking, client, subscription: sub, slot_1: slot1, slot_2: slot2 })
+  } catch (e: unknown) {
+    const msg = e instanceof Error ? e.message : 'Internal server error'
+    return res.status(500).json({ error: msg })
+  }
+})
+
 // DELETE /bookings-v2/:id — отменить бронь
 router.delete('/:id', requireRole('owner', 'franchisee', 'admin'), async (req: Request, res: Response) => {
   const { id } = req.params
