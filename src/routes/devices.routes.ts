@@ -40,7 +40,7 @@ router.post('/', requireRole('owner', 'franchisee', 'admin'), async (req: Reques
         .select('id')
         .eq('owner_id', req.user!.id)
         .single()
-      branchId = branch?.id
+      branchId = branch?.id || null
     }
 
     if (!branchId) {
