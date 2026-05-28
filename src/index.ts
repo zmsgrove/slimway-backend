@@ -20,6 +20,7 @@ import subscriptionTemplatesRouter from './routes/subscription-templates.routes'
 import employeesRouter from './routes/employees.routes'
 import shiftsRouter from './routes/shifts.routes'
 import leadsRouter from './routes/leads.routes'
+import auditLogRouter from './routes/audit-log.routes'
 
 dotenv.config()
 
@@ -135,6 +136,7 @@ app.use('/api/v1/subscription-templates', subscriptionTemplatesRouter)
 app.use('/api/v1/employees', employeesRouter)
 app.use('/api/v1/shifts', shiftsRouter)
 app.use('/api/v1/leads', leadsRouter)
+app.use('/api/v1/audit-log', auditLogRouter)
 
 // 404
 app.use((_req, res) => {

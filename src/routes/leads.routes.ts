@@ -1,6 +1,7 @@
 import { Router, Request, Response } from 'express'
 import { supabase } from '../config/supabase'
 import { resolveBranchId } from '../utils/resolveBranchId'
+import { logAction } from '../utils/logAction'
 
 const router = Router()
 
@@ -32,7 +33,6 @@ router.get('/', async (req: Request, res: Response) => {
     }
     return res.json(data)
   } catch (e: unknown) {
-    console.error('[leads GET / catch]', e)
     const msg = e instanceof Error ? e.message : 'Internal server error'
     return res.status(500).json({ error: msg })
   }
@@ -72,7 +72,6 @@ router.post('/', async (req: Request, res: Response) => {
     }
     return res.status(201).json(data)
   } catch (e: unknown) {
-    console.error('[leads POST / catch]', e)
     const msg = e instanceof Error ? e.message : 'Internal server error'
     return res.status(500).json({ error: msg })
   }
@@ -98,13 +97,13 @@ router.patch('/:id', async (req: Request, res: Response) => {
   const { full_name, phone, source, notes, assigned_to, status, client_id } = req.body
 
   const updates: Record<string, unknown> = { updated_at: new Date().toISOString() }
-  if (full_name  !== undefined) updates.full_name  = full_name
-  if (phone      !== undefined) updates.phone      = phone
-  if (source     !== undefined) updates.source     = source
-  if (notes      !== undefined) updates.notes      = notes
+  if (full_name   !== undefined) updates.full_name   = full_name
+  if (phone       !== undefined) updates.phone       = phone
+  if (source      !== undefined) updates.source      = source
+  if (notes       !== undefined) updates.notes       = notes
   if (assigned_to !== undefined) updates.assigned_to = assigned_to
-  if (status     !== undefined) updates.status     = status
-  if (client_id  !== undefined) updates.client_id  = client_id
+  if (status      !== undefined) updates.status      = status
+  if (client_id   !== undefined) updates.client_id   = client_id
 
   const { data, error } = await supabase
     .from('leads')
@@ -126,9 +125,37 @@ router.patch('/:id/status', async (req: Request, res: Response) => {
     return res.status(400).json({ error: 'status required', code: 'VALIDATION_ERROR' })
   }
 
-  const updates: Record<string, unknown> = { status, updated_at: new Date().toISOString() }
+  // Load lead first
+  const { data: lead, error: leadErr } = await supabase
+    .from('leads')
+    .select('*')
+    .eq('id', id)
+    .single()
 
-  // Если переводим в success — запланируем архивирование через 2 месяца (клиент должен сам запустить, здесь просто статус)
+  if (leadErr || !lead) return res.status(404).json({ error: 'Lead not found' })
+
+  const updates: Record<string, unknown> = { status, updated_at: new Date().toISOString() }
+  let newClientId: string | null = null
+
+  // success + no client yet → create draft client
+  if (status === 'success' && !lead.client_id) {
+    const { data: newClient, error: clientErr } = await supabase
+      .from('clients')
+      .insert({
+        branch_id: lead.branch_id,
+        full_name: lead.full_name,
+        phone:     lead.phone ?? null,
+        status:    'draft',
+      })
+      .select('id')
+      .single()
+
+    if (!clientErr && newClient) {
+      newClientId = newClient.id
+      updates.client_id = newClientId
+    }
+  }
+
   const { data, error } = await supabase
     .from('leads')
     .update(updates)
@@ -137,7 +164,22 @@ router.patch('/:id/status', async (req: Request, res: Response) => {
     .single()
 
   if (error) return res.status(500).json({ error: error.message })
-  return res.json(data)
+
+  // audit log
+  if (newClientId) {
+    const { data: profile } = await supabase.from('profiles').select('full_name').eq('id', req.user!.id).single()
+    await logAction({
+      branch_id:   lead.branch_id,
+      entity_type: 'client',
+      entity_id:   newClientId,
+      action:      'create_from_lead',
+      actor_id:    req.user!.id,
+      actor_name:  profile?.full_name ?? req.user!.email,
+      details:     { lead_id: id, lead_name: lead.full_name },
+    })
+  }
+
+  return res.json({ ...data, client_id: newClientId ?? data.client_id })
 })
 
 // DELETE /leads/:id — удалить лид
@@ -161,9 +203,9 @@ router.post('/:id/comments', async (req: Request, res: Response) => {
   const { data, error } = await supabase
     .from('lead_comments')
     .insert({
-      lead_id: id,
+      lead_id:   id,
       author_id: req.user!.id,
-      text: text.trim(),
+      text:      text.trim(),
     })
     .select('*, profiles(full_name)')
     .single()

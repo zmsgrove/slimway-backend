@@ -71,11 +71,19 @@ router.post('/', requireRole('owner', 'franchisee', 'admin'), async (req: Reques
 // PATCH /clients/:id — обновить клиента
 router.patch('/:id', requireRole('owner', 'franchisee', 'admin'), async (req: Request, res: Response) => {
   const { id } = req.params
-  const { full_name, phone, email, birth_date, notes } = req.body
+  const { full_name, phone, email, birth_date, notes, status } = req.body
+
+  const patch: Record<string, unknown> = {}
+  if (full_name  !== undefined) patch.full_name  = full_name
+  if (phone      !== undefined) patch.phone      = phone
+  if (email      !== undefined) patch.email      = email
+  if (birth_date !== undefined) patch.birth_date = birth_date
+  if (notes      !== undefined) patch.notes      = notes
+  if (status     !== undefined) patch.status     = status
 
   const { data, error } = await supabase
     .from('clients')
-    .update({ full_name, phone, email, birth_date, notes })
+    .update(patch)
     .eq('id', id)
     .select()
     .single()

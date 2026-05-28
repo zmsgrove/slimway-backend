@@ -2,10 +2,11 @@ import { Router, Request, Response } from 'express'
 import { supabase } from '../config/supabase'
 import { requireRole } from '../middleware/role.middleware'
 import { resolveBranchId } from '../utils/resolveBranchId'
+import { logAction } from '../utils/logAction'
 
 const router = Router()
 
-// GET /subscriptions — список абонементов клиентов (purchased), фильтр по клиенту/статусу
+// GET /subscriptions
 router.get('/', async (req: Request, res: Response) => {
   try {
     const { branch_id } = req.user!
@@ -14,6 +15,7 @@ router.get('/', async (req: Request, res: Response) => {
     let query = supabase
       .from('subscriptions')
       .select('*, clients(full_name, phone)')
+      .is('deleted_at', null)
       .order('created_at', { ascending: false })
 
     if (branch_id) query = query.eq('branch_id', branch_id)
@@ -38,6 +40,7 @@ router.get('/:id', async (req: Request, res: Response) => {
       .from('subscriptions')
       .select('*, clients(full_name, phone)')
       .eq('id', id)
+      .is('deleted_at', null)
       .single()
 
     if (error) return res.status(404).json({ error: 'Subscription not found', code: 'NOT_FOUND' })
@@ -48,7 +51,7 @@ router.get('/:id', async (req: Request, res: Response) => {
   }
 })
 
-// POST /subscriptions — продать абонемент клиенту (создать purchased subscription)
+// POST /subscriptions
 router.post('/', requireRole('owner', 'franchisee', 'admin'), async (req: Request, res: Response) => {
   try {
     const branchId = await resolveBranchId(req.user!)
@@ -96,15 +99,15 @@ router.post('/', requireRole('owner', 'franchisee', 'admin'), async (req: Reques
   }
 })
 
-// PATCH /subscriptions/:id — обновить статус, продлить
+// PATCH /subscriptions/:id
 router.patch('/:id', requireRole('owner', 'franchisee', 'admin'), async (req: Request, res: Response) => {
   try {
     const { id } = req.params
     const { status, date_end, slot_1_sessions_left, slot_2_sessions_left } = req.body
 
     const patch: Record<string, unknown> = {}
-    if (status !== undefined)               patch.status = status
-    if (date_end !== undefined)             patch.date_end = date_end
+    if (status               !== undefined) patch.status               = status
+    if (date_end             !== undefined) patch.date_end             = date_end
     if (slot_1_sessions_left !== undefined) patch.slot_1_sessions_left = slot_1_sessions_left
     if (slot_2_sessions_left !== undefined) patch.slot_2_sessions_left = slot_2_sessions_left
 
@@ -117,6 +120,50 @@ router.patch('/:id', requireRole('owner', 'franchisee', 'admin'), async (req: Re
 
     if (error) return res.status(500).json({ error: error.message })
     return res.json(data)
+  } catch (e: unknown) {
+    const msg = e instanceof Error ? e.message : 'Internal server error'
+    return res.status(500).json({ error: msg })
+  }
+})
+
+// DELETE /subscriptions/:id — soft delete (developer, owner, franchisee)
+router.delete('/:id', requireRole('owner', 'franchisee'), async (req: Request, res: Response) => {
+  try {
+    const { id } = req.params
+
+    const { data: sub, error: subErr } = await supabase
+      .from('subscriptions')
+      .select('id, name, client_id, branch_id')
+      .eq('id', id)
+      .is('deleted_at', null)
+      .single()
+
+    if (subErr || !sub) {
+      return res.status(404).json({ error: 'Subscription not found', code: 'NOT_FOUND' })
+    }
+
+    const now = new Date().toISOString()
+
+    const { error } = await supabase
+      .from('subscriptions')
+      .update({ status: 'cancelled', deleted_at: now, deleted_by: req.user!.id })
+      .eq('id', id)
+
+    if (error) return res.status(500).json({ error: error.message })
+
+    // audit log with client_id as entity_id for client history tab
+    const { data: profile } = await supabase.from('profiles').select('full_name').eq('id', req.user!.id).single()
+    await logAction({
+      branch_id:   sub.branch_id,
+      entity_type: 'subscription',
+      entity_id:   sub.client_id,
+      action:      'delete_subscription',
+      actor_id:    req.user!.id,
+      actor_name:  profile?.full_name ?? req.user!.email,
+      details:     { subscription_id: id, subscription_name: sub.name },
+    })
+
+    return res.status(204).send()
   } catch (e: unknown) {
     const msg = e instanceof Error ? e.message : 'Internal server error'
     return res.status(500).json({ error: msg })
