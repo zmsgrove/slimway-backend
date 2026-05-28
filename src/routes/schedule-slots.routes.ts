@@ -24,6 +24,33 @@ router.get('/', async (req: Request, res: Response) => {
   return res.json(data)
 })
 
+// POST /schedule-slots/bulk — массовое создание ячеек
+router.post('/bulk', requireRole('owner', 'franchisee', 'admin'), async (req: Request, res: Response) => {
+  const branchId = await resolveBranchId(req.user!)
+  const { slots } = req.body as { slots?: Array<{ device_id: string; date: string; time_start: string; time_end: string }> }
+
+  if (!Array.isArray(slots) || slots.length === 0) {
+    return res.status(400).json({ error: 'slots array required', code: 'VALIDATION_ERROR' })
+  }
+
+  const rows = slots.map(s => ({
+    branch_id: branchId,
+    device_id: s.device_id,
+    date: s.date,
+    time_start: s.time_start,
+    time_end: s.time_end,
+    status: 'free',
+  }))
+
+  const { data, error } = await supabase
+    .from('schedule_slots')
+    .insert(rows)
+    .select('*, devices(id, type, number, device_group, status)')
+
+  if (error) return res.status(500).json({ error: error.message })
+  return res.status(201).json(data)
+})
+
 // POST /schedule-slots — создать ячейку
 router.post('/', requireRole('owner', 'franchisee', 'admin'), async (req: Request, res: Response) => {
   const branchId = await resolveBranchId(req.user!)
