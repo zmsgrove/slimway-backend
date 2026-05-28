@@ -17,6 +17,8 @@ import subscriptionsRouter from './routes/subscriptions.routes'
 import scheduleSlotsRouter from './routes/schedule-slots.routes'
 import bookingsV2Router from './routes/bookings-v2.routes'
 import subscriptionTemplatesRouter from './routes/subscription-templates.routes'
+import employeesRouter from './routes/employees.routes'
+import shiftsRouter from './routes/shifts.routes'
 
 dotenv.config()
 
@@ -90,7 +92,7 @@ app.post('/api/wazzup-proxy', async (req, res) => {
         'Authorization': `Bearer ${process.env.WAZZUP_API_KEY}`
       },
       body: JSON.stringify({
-        channelId: channel.id,
+        channelId: channel.channelId,
         chatType: 'whatsapp',
         chatId: phone,
         text: message
@@ -118,6 +120,8 @@ app.use('/api/v1/subscriptions', subscriptionsRouter)
 app.use('/api/v1/schedule-slots', scheduleSlotsRouter)
 app.use('/api/v1/bookings-v2', bookingsV2Router)
 app.use('/api/v1/subscription-templates', subscriptionTemplatesRouter)
+app.use('/api/v1/employees', employeesRouter)
+app.use('/api/v1/shifts', shiftsRouter)
 
 // 404
 app.use((_req, res) => {
