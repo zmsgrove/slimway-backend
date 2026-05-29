@@ -28,6 +28,7 @@ import positionsRouter from './routes/positions.routes'
 import analyticsRouter from './routes/analytics.routes'
 import branchSubscriptionTemplatesRouter from './routes/branch-subscription-templates.routes'
 import catalogRouter from './routes/catalog.routes'
+import profileRouter from './routes/profile.routes'
 
 dotenv.config()
 
@@ -126,6 +127,9 @@ app.post('/api/wazzup-proxy', async (req, res) => {
     return res.status(500).json({ error: e.message })
   }
 })
+
+// Profile routes — без resolveBranch (профиль не привязан к конкретному филиалу)
+app.use('/api/v1/profile', requireAuth, profileRouter)
 
 // Все API-роуты защищены авторизацией и резолвером филиала
 app.use('/api/v1', requireAuth, resolveBranch)
