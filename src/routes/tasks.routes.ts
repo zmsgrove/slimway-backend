@@ -4,6 +4,12 @@ import { resolveBranchId } from '../utils/resolveBranchId'
 
 const router = Router()
 
+function parseObserverIds(raw: unknown): string[] {
+  if (Array.isArray(raw)) return raw
+  if (typeof raw === 'string') { try { return JSON.parse(raw) } catch { return [] } }
+  return []
+}
+
 // GET /tasks
 router.get('/', async (req: Request, res: Response) => {
   try {
@@ -15,7 +21,8 @@ router.get('/', async (req: Request, res: Response) => {
     if (branchId) query = query.eq('branch_id', branchId)
     const { data, error } = await query
     if (error) return res.status(500).json({ error: error.message })
-    return res.json(data)
+    const result = (data || []).map((t: Record<string, unknown>) => ({ ...t, observer_ids: parseObserverIds(t.observer_ids) }))
+    return res.json(result)
   } catch (e: unknown) {
     const msg = e instanceof Error ? e.message : 'Internal server error'
     return res.status(500).json({ error: msg })
@@ -27,24 +34,26 @@ router.post('/', async (req: Request, res: Response) => {
   try {
     const branchId = await resolveBranchId(req.user!)
     if (!branchId) return res.status(400).json({ error: 'No branch', code: 'NO_BRANCH' })
-    const { title, description, priority, status, assigned_to, deadline } = req.body
+    const { title, description, priority, status, assigned_to, observer_ids, deadline } = req.body
     if (!title?.trim()) return res.status(400).json({ error: 'title required', code: 'VALIDATION_ERROR' })
     const { data, error } = await supabase
       .from('tasks')
       .insert({
-        branch_id:   branchId,
-        title:       title.trim(),
-        description: description?.trim() || null,
-        priority:    priority || 'medium',
-        status:      status || 'new',
-        assigned_to: assigned_to || null,
-        deadline:    deadline || null,
-        created_by:  req.user!.id,
+        branch_id:    branchId,
+        title:        title.trim(),
+        description:  description?.trim() || null,
+        priority:     priority || 'medium',
+        status:       status || 'new',
+        assigned_to:  assigned_to || null,
+        observer_ids: JSON.stringify(Array.isArray(observer_ids) ? observer_ids : []),
+        deadline:     deadline || null,
+        created_by:   req.user!.id,
       })
       .select()
       .single()
     if (error) return res.status(500).json({ error: error.message })
-    return res.status(201).json(data)
+    const result = { ...data, observer_ids: Array.isArray(data.observer_ids) ? data.observer_ids : (typeof data.observer_ids === 'string' ? JSON.parse(data.observer_ids) : []) }
+    return res.status(201).json(result)
   } catch (e: unknown) {
     const msg = e instanceof Error ? e.message : 'Internal server error'
     return res.status(500).json({ error: msg })

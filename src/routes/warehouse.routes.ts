@@ -1,5 +1,6 @@
 import { Router, Request, Response } from 'express'
 import { supabase } from '../config/supabase'
+import { requireRole } from '../middleware/role.middleware'
 import { resolveBranchId } from '../utils/resolveBranchId'
 
 const router = Router()
@@ -47,22 +48,24 @@ router.get('/', async (req: Request, res: Response) => {
   }
 })
 
-// POST /warehouse
-router.post('/', async (req: Request, res: Response) => {
+// POST /warehouse — только developer/owner
+router.post('/', requireRole('owner'), async (req: Request, res: Response) => {
   try {
     const branchId = await resolveBranchId(req.user!)
     if (!branchId) return res.status(400).json({ error: 'No branch', code: 'NO_BRANCH' })
-    const { name, category, quantity, min_quantity, price } = req.body
+    const { name, sku, category, unit, quantity, min_quantity, price } = req.body
     if (!name?.trim()) return res.status(400).json({ error: 'name required', code: 'VALIDATION_ERROR' })
     const { data, error } = await supabase
       .from('warehouse_items')
       .insert({
-        branch_id:   branchId,
-        name:        name.trim(),
-        category:    category || 'other',
-        quantity:    quantity ?? 0,
+        branch_id:    branchId,
+        name:         name.trim(),
+        sku:          sku?.trim() || null,
+        category:     category || 'other',
+        unit:         unit?.trim() || null,
+        quantity:     quantity ?? 0,
         min_quantity: min_quantity ?? null,
-        price:       price ?? null,
+        price:        price ?? null,
       })
       .select()
       .single()
@@ -93,10 +96,10 @@ router.get('/:id', async (req: Request, res: Response) => {
   }
 })
 
-// PATCH /warehouse/:id
-router.patch('/:id', async (req: Request, res: Response) => {
+// PATCH /warehouse/:id — только developer/owner
+router.patch('/:id', requireRole('owner'), async (req: Request, res: Response) => {
   try {
-    const allowed = ['name', 'category', 'quantity', 'min_quantity', 'price']
+    const allowed = ['name', 'sku', 'category', 'unit', 'quantity', 'min_quantity', 'price']
     const patch: Record<string, unknown> = {}
     for (const key of allowed) {
       if (key in req.body) patch[key] = req.body[key]
@@ -127,8 +130,8 @@ router.delete('/:id', async (req: Request, res: Response) => {
   }
 })
 
-// POST /warehouse/:id/movement
-router.post('/:id/movement', async (req: Request, res: Response) => {
+// POST /warehouse/:id/movement — developer/owner/franchisee
+router.post('/:id/movement', requireRole('owner', 'franchisee'), async (req: Request, res: Response) => {
   try {
     const branchId = await resolveBranchId(req.user!)
     if (!branchId) return res.status(400).json({ error: 'No branch', code: 'NO_BRANCH' })
