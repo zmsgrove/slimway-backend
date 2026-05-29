@@ -52,6 +52,18 @@ router.post('/', async (req: Request, res: Response) => {
     }
 
     const assignedTo = (typeof assigned_to === 'string' ? assigned_to.trim() : '') || null
+
+    // assigned_to arrives as employees.id — resolve to profile_id for FK
+    let resolvedAssignedTo: string | null = null
+    if (assignedTo) {
+      const { data: emp } = await supabase
+        .from('employees')
+        .select('profile_id')
+        .eq('id', assignedTo)
+        .single()
+      resolvedAssignedTo = (emp?.profile_id as string | null) ?? null
+    }
+
     const { data, error } = await supabase
       .from('leads')
       .insert({
@@ -60,7 +72,7 @@ router.post('/', async (req: Request, res: Response) => {
         phone: phone || null,
         source: source || 'manual',
         notes: notes || null,
-        assigned_to: assignedTo,
+        assigned_to: resolvedAssignedTo,
         created_by: req.user!.id,
         status: 'new',
       })
@@ -102,7 +114,18 @@ router.patch('/:id', async (req: Request, res: Response) => {
   if (phone       !== undefined) updates.phone       = phone
   if (source      !== undefined) updates.source      = source
   if (notes       !== undefined) updates.notes       = notes
-  if (assigned_to !== undefined) updates.assigned_to = assigned_to || null
+  if (assigned_to !== undefined) {
+    if (assigned_to) {
+      const { data: emp } = await supabase
+        .from('employees')
+        .select('profile_id')
+        .eq('id', String(assigned_to).trim())
+        .single()
+      updates.assigned_to = (emp?.profile_id as string | null) ?? null
+    } else {
+      updates.assigned_to = null
+    }
+  }
   if (status      !== undefined) updates.status      = status
   if (client_id   !== undefined) updates.client_id   = client_id
 
