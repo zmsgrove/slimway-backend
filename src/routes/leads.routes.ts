@@ -101,7 +101,7 @@ router.patch('/:id', async (req: Request, res: Response) => {
   if (phone       !== undefined) updates.phone       = phone
   if (source      !== undefined) updates.source      = source
   if (notes       !== undefined) updates.notes       = notes
-  if (assigned_to !== undefined) updates.assigned_to = assigned_to
+  if (assigned_to !== undefined) updates.assigned_to = assigned_to || null
   if (status      !== undefined) updates.status      = status
   if (client_id   !== undefined) updates.client_id   = client_id
 

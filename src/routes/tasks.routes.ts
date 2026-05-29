@@ -20,10 +20,14 @@ router.get('/', async (req: Request, res: Response) => {
       .order('created_at', { ascending: false })
     if (branchId) query = query.eq('branch_id', branchId)
     const { data, error } = await query
-    if (error) return res.status(500).json({ error: error.message })
+    if (error) {
+      console.error('[tasks GET /]', error)
+      return res.status(500).json({ error: error.message, code: error.code })
+    }
     const result = (data || []).map((t: Record<string, unknown>) => ({ ...t, observer_ids: parseObserverIds(t.observer_ids) }))
     return res.json(result)
   } catch (e: unknown) {
+    console.error('[tasks GET / catch]', e)
     const msg = e instanceof Error ? e.message : 'Internal server error'
     return res.status(500).json({ error: msg })
   }
@@ -45,13 +49,16 @@ router.post('/', async (req: Request, res: Response) => {
         priority:     priority || 'medium',
         status:       status || 'new',
         assigned_to:  assigned_to || null,
-        observer_ids: JSON.stringify(Array.isArray(observer_ids) ? observer_ids : []),
+        observer_ids: Array.isArray(observer_ids) ? observer_ids : [],
         deadline:     deadline || null,
         created_by:   req.user!.id,
       })
       .select()
       .single()
-    if (error) return res.status(500).json({ error: error.message })
+    if (error) {
+      console.error('[tasks POST /]', error)
+      return res.status(500).json({ error: error.message })
+    }
     const result = { ...data, observer_ids: Array.isArray(data.observer_ids) ? data.observer_ids : (typeof data.observer_ids === 'string' ? JSON.parse(data.observer_ids) : []) }
     return res.status(201).json(result)
   } catch (e: unknown) {
