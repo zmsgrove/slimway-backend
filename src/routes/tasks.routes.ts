@@ -1,8 +1,11 @@
 import { Router, Request, Response } from 'express'
 import { supabase } from '../config/supabase'
 import { resolveBranchId } from '../utils/resolveBranchId'
+import { logAction } from '../utils/logAction'
 
 const router = Router()
+
+const PRIVILEGED = ['developer', 'owner', 'franchisee']
 
 function parseObserverIds(raw: unknown): string[] {
   if (Array.isArray(raw)) return raw
@@ -14,20 +17,41 @@ function parseObserverIds(raw: unknown): string[] {
 router.get('/', async (req: Request, res: Response) => {
   try {
     const branchId = await resolveBranchId(req.user!)
+    const isPrivileged = PRIVILEGED.includes(req.user!.role)
+
     let query = supabase
       .from('tasks')
-      .select(`*, task_checklist_items(*), task_comments(*)`)
+      .select('*, task_checklist_items(*), task_checklist_groups(*), task_comments(*)')
       .order('created_at', { ascending: false })
+
     if (branchId) query = query.eq('branch_id', branchId)
+
+    if (!isPrivileged) {
+      const userId = req.user!.id
+      const { data: emp } = await supabase
+        .from('employees')
+        .select('id')
+        .eq('profile_id', userId)
+        .eq('branch_id', branchId ?? '')
+        .maybeSingle()
+
+      const parts = [`created_by.eq.${userId}`]
+      if (emp?.id) parts.push(`assigned_to.eq.${emp.id}`)
+      parts.push(`observer_ids.cs.["${userId}"]`)
+      query = query.or(parts.join(','))
+    }
+
     const { data, error } = await query
     if (error) {
       console.error('[tasks GET /]', error)
       return res.status(500).json({ error: error.message, code: error.code })
     }
-    const result = (data || []).map((t: Record<string, unknown>) => ({ ...t, observer_ids: parseObserverIds(t.observer_ids) }))
+    const result = (data || []).map((t: Record<string, unknown>) => ({
+      ...t,
+      observer_ids: parseObserverIds(t.observer_ids),
+    }))
     return res.json(result)
   } catch (e: unknown) {
-    console.error('[tasks GET / catch]', e)
     const msg = e instanceof Error ? e.message : 'Internal server error'
     return res.status(500).json({ error: msg })
   }
@@ -59,7 +83,7 @@ router.post('/', async (req: Request, res: Response) => {
       console.error('[tasks POST /]', error)
       return res.status(500).json({ error: error.message })
     }
-    const result = { ...data, observer_ids: Array.isArray(data.observer_ids) ? data.observer_ids : (typeof data.observer_ids === 'string' ? JSON.parse(data.observer_ids) : []) }
+    const result = { ...data, observer_ids: parseObserverIds(data.observer_ids) }
     return res.status(201).json(result)
   } catch (e: unknown) {
     const msg = e instanceof Error ? e.message : 'Internal server error'
@@ -72,21 +96,29 @@ router.get('/:id', async (req: Request, res: Response) => {
   try {
     const { data, error } = await supabase
       .from('tasks')
-      .select(`*, task_checklist_items(*), task_comments(*)`)
+      .select('*, task_checklist_items(*), task_checklist_groups(*), task_comments(*)')
       .eq('id', req.params.id)
       .single()
     if (error || !data) return res.status(404).json({ error: 'Not found', code: 'NOT_FOUND' })
-    return res.json(data)
+    return res.json({ ...data, observer_ids: parseObserverIds(data.observer_ids) })
   } catch (e: unknown) {
     const msg = e instanceof Error ? e.message : 'Internal server error'
     return res.status(500).json({ error: msg })
   }
 })
 
-// PATCH /tasks/:id
+// PATCH /tasks/:id — only creator or privileged
 router.patch('/:id', async (req: Request, res: Response) => {
   try {
-    const allowed = ['title', 'description', 'priority', 'status', 'assigned_to', 'deadline']
+    const isPrivileged = PRIVILEGED.includes(req.user!.role)
+    if (!isPrivileged) {
+      const { data: existing } = await supabase
+        .from('tasks').select('created_by').eq('id', req.params.id).single()
+      if (!existing || existing.created_by !== req.user!.id) {
+        return res.status(403).json({ error: 'Forbidden', code: 'FORBIDDEN' })
+      }
+    }
+    const allowed = ['title', 'description', 'priority', 'status', 'assigned_to', 'deadline', 'observer_ids']
     const patch: Record<string, unknown> = {}
     for (const key of allowed) {
       if (key in req.body) patch[key] = req.body[key]
@@ -98,7 +130,7 @@ router.patch('/:id', async (req: Request, res: Response) => {
       .select()
       .single()
     if (error) return res.status(500).json({ error: error.message })
-    return res.json(data)
+    return res.json({ ...data, observer_ids: parseObserverIds(data.observer_ids) })
   } catch (e: unknown) {
     const msg = e instanceof Error ? e.message : 'Internal server error'
     return res.status(500).json({ error: msg })
@@ -117,14 +149,98 @@ router.delete('/:id', async (req: Request, res: Response) => {
   }
 })
 
+// PATCH /tasks/:id/status
+router.patch('/:id/status', async (req: Request, res: Response) => {
+  try {
+    const { status } = req.body
+    const valid = ['new', 'today', 'week', 'long', 'done', 'closed', 'pending_close']
+    if (!valid.includes(status)) return res.status(400).json({ error: 'Invalid status' })
+
+    const { data: task, error: taskErr } = await supabase
+      .from('tasks').select('*').eq('id', req.params.id).single()
+    if (taskErr || !task) return res.status(404).json({ error: 'Not found' })
+
+    const isPrivileged = PRIVILEGED.includes(req.user!.role)
+    const isCreator    = task.created_by === req.user!.id
+
+    let isAssignee = false
+    if (!isPrivileged && !isCreator && task.assigned_to) {
+      const { data: emp } = await supabase
+        .from('employees').select('id').eq('profile_id', req.user!.id).maybeSingle()
+      isAssignee = emp?.id === task.assigned_to
+    }
+
+    if (!isPrivileged && !isCreator && !isAssignee) {
+      return res.status(403).json({ error: 'Forbidden', code: 'FORBIDDEN' })
+    }
+
+    let actualStatus = status
+    if (status === 'closed' && !isPrivileged && !isCreator && isAssignee) {
+      actualStatus = 'pending_close'
+      const { data: profile } = await supabase
+        .from('profiles').select('full_name').eq('id', req.user!.id).single()
+      await logAction({
+        branch_id:   task.branch_id,
+        entity_type: 'task',
+        entity_id:   req.params.id,
+        action:      'request_close',
+        actor_id:    req.user!.id,
+        actor_name:  profile?.full_name ?? req.user!.email,
+        details:     { task_title: task.title },
+      })
+    }
+
+    const { data, error } = await supabase
+      .from('tasks')
+      .update({ status: actualStatus, updated_at: new Date().toISOString() })
+      .eq('id', req.params.id)
+      .select()
+      .single()
+    if (error) return res.status(500).json({ error: error.message })
+    return res.json({ ...data, observer_ids: parseObserverIds(data.observer_ids) })
+  } catch (e: unknown) {
+    const msg = e instanceof Error ? e.message : 'Internal server error'
+    return res.status(500).json({ error: msg })
+  }
+})
+
+// POST /tasks/:id/confirm-close — creator or privileged
+router.post('/:id/confirm-close', async (req: Request, res: Response) => {
+  try {
+    const { data: task, error: taskErr } = await supabase
+      .from('tasks').select('*').eq('id', req.params.id).single()
+    if (taskErr || !task) return res.status(404).json({ error: 'Not found' })
+
+    const isPrivileged = PRIVILEGED.includes(req.user!.role)
+    if (!isPrivileged && task.created_by !== req.user!.id) {
+      return res.status(403).json({ error: 'Forbidden', code: 'FORBIDDEN' })
+    }
+    if (task.status !== 'pending_close') {
+      return res.status(400).json({ error: 'Task is not pending close', code: 'INVALID_STATE' })
+    }
+
+    const { data, error } = await supabase
+      .from('tasks')
+      .update({ status: 'closed', updated_at: new Date().toISOString() })
+      .eq('id', req.params.id)
+      .select()
+      .single()
+    if (error) return res.status(500).json({ error: error.message })
+    return res.json({ ...data, observer_ids: parseObserverIds(data.observer_ids) })
+  } catch (e: unknown) {
+    const msg = e instanceof Error ? e.message : 'Internal server error'
+    return res.status(500).json({ error: msg })
+  }
+})
+
 // POST /tasks/:id/checklists
 router.post('/:id/checklists', async (req: Request, res: Response) => {
   try {
-    const { text } = req.body
+    const { text, group_id } = req.body
     if (!text?.trim()) return res.status(400).json({ error: 'text required' })
     const { data, error } = await supabase
       .from('task_checklist_items')
-      .insert({ task_id: req.params.id, text: text.trim(), is_done: false })
+      .insert({ task_id: req.params.id, text: text.trim(), is_done: false, group_id: group_id || null })
       .select()
       .single()
     if (error) return res.status(500).json({ error: error.message })
@@ -157,6 +273,58 @@ router.patch('/:id/checklists/:item_id', async (req: Request, res: Response) => 
   }
 })
 
+// POST /tasks/:id/checklist-groups
+router.post('/:id/checklist-groups', async (req: Request, res: Response) => {
+  try {
+    const { title } = req.body
+    if (!title?.trim()) return res.status(400).json({ error: 'title required' })
+    const { data, error } = await supabase
+      .from('task_checklist_groups')
+      .insert({ task_id: req.params.id, title: title.trim() })
+      .select()
+      .single()
+    if (error) return res.status(500).json({ error: error.message })
+    return res.status(201).json(data)
+  } catch (e: unknown) {
+    const msg = e instanceof Error ? e.message : 'Internal server error'
+    return res.status(500).json({ error: msg })
+  }
+})
+
+// POST /tasks/:id/checklist-groups/:gid/items
+router.post('/:id/checklist-groups/:gid/items', async (req: Request, res: Response) => {
+  try {
+    const { text } = req.body
+    if (!text?.trim()) return res.status(400).json({ error: 'text required' })
+    const { data, error } = await supabase
+      .from('task_checklist_items')
+      .insert({ task_id: req.params.id, group_id: req.params.gid, text: text.trim(), is_done: false })
+      .select()
+      .single()
+    if (error) return res.status(500).json({ error: error.message })
+    return res.status(201).json(data)
+  } catch (e: unknown) {
+    const msg = e instanceof Error ? e.message : 'Internal server error'
+    return res.status(500).json({ error: msg })
+  }
+})
+
+// DELETE /tasks/:id/checklist-groups/:gid
+router.delete('/:id/checklist-groups/:gid', async (req: Request, res: Response) => {
+  try {
+    const { error } = await supabase
+      .from('task_checklist_groups')
+      .delete()
+      .eq('id', req.params.gid)
+      .eq('task_id', req.params.id)
+    if (error) return res.status(500).json({ error: error.message })
+    return res.status(204).send()
+  } catch (e: unknown) {
+    const msg = e instanceof Error ? e.message : 'Internal server error'
+    return res.status(500).json({ error: msg })
+  }
+})
+
 // POST /tasks/:id/comments
 router.post('/:id/comments', async (req: Request, res: Response) => {
   try {
@@ -169,26 +337,6 @@ router.post('/:id/comments', async (req: Request, res: Response) => {
       .single()
     if (error) return res.status(500).json({ error: error.message })
     return res.status(201).json(data)
-  } catch (e: unknown) {
-    const msg = e instanceof Error ? e.message : 'Internal server error'
-    return res.status(500).json({ error: msg })
-  }
-})
-
-// PATCH /tasks/:id/status
-router.patch('/:id/status', async (req: Request, res: Response) => {
-  try {
-    const { status } = req.body
-    const valid = ['new', 'today', 'week', 'long', 'done']
-    if (!valid.includes(status)) return res.status(400).json({ error: 'Invalid status' })
-    const { data, error } = await supabase
-      .from('tasks')
-      .update({ status })
-      .eq('id', req.params.id)
-      .select()
-      .single()
-    if (error) return res.status(500).json({ error: error.message })
-    return res.json(data)
   } catch (e: unknown) {
     const msg = e instanceof Error ? e.message : 'Internal server error'
     return res.status(500).json({ error: msg })
