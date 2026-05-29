@@ -32,7 +32,7 @@ router.get('/', async (req: Request, res: Response) => {
     const branchId = await resolveBranchId(req.user!)
     let query = supabase
       .from('warehouse_items')
-      .select('*')
+      .select('*, catalog_items(name, category, unit, sku)')
       .order('name')
     if (branchId) query = query.eq('branch_id', branchId)
     const { data, error } = await query
@@ -71,6 +71,77 @@ router.post('/', requireRole('owner'), async (req: Request, res: Response) => {
       .single()
     if (error) return res.status(500).json({ error: error.message })
     return res.status(201).json(data)
+  } catch (e: unknown) {
+    const msg = e instanceof Error ? e.message : 'Internal server error'
+    return res.status(500).json({ error: msg })
+  }
+})
+
+// POST /warehouse/intake — приход из каталога, auto-create warehouse_item если нет
+router.post('/intake', requireRole('owner', 'franchisee'), async (req: Request, res: Response) => {
+  try {
+    const branchId = await resolveBranchId(req.user!)
+    if (!branchId) return res.status(400).json({ error: 'No branch', code: 'NO_BRANCH' })
+    const { catalog_item_id, quantity, notes, supplier } = req.body
+    if (!catalog_item_id) return res.status(400).json({ error: 'catalog_item_id required' })
+    if (!quantity || quantity <= 0) return res.status(400).json({ error: 'quantity must be positive' })
+
+    const { data: catalogItem, error: catErr } = await supabase
+      .from('catalog_items')
+      .select('*')
+      .eq('id', catalog_item_id)
+      .single()
+    if (catErr || !catalogItem) return res.status(404).json({ error: 'Catalog item not found' })
+
+    // Find or create warehouse_item
+    const { data: existing } = await supabase
+      .from('warehouse_items')
+      .select('id, quantity')
+      .eq('branch_id', branchId)
+      .eq('catalog_item_id', catalog_item_id)
+      .single()
+
+    let warehouseItemId: string
+    if (existing) {
+      warehouseItemId = existing.id as string
+      await supabase
+        .from('warehouse_items')
+        .update({ quantity: (existing.quantity as number) + quantity })
+        .eq('id', warehouseItemId)
+    } else {
+      const { data: newItem, error: createErr } = await supabase
+        .from('warehouse_items')
+        .insert({
+          branch_id:       branchId,
+          catalog_item_id: catalog_item_id,
+          name:            catalogItem.name,
+          sku:             catalogItem.sku ?? null,
+          category:        catalogItem.category ?? 'other',
+          unit:            catalogItem.unit ?? null,
+          quantity,
+          price:           catalogItem.price ?? null,
+        })
+        .select('id')
+        .single()
+      if (createErr || !newItem) return res.status(500).json({ error: createErr?.message ?? 'Failed to create item' })
+      warehouseItemId = newItem.id as string
+    }
+
+    const { data: movement, error: mvErr } = await supabase
+      .from('warehouse_movements')
+      .insert({
+        item_id:    warehouseItemId,
+        branch_id:  branchId,
+        type:       'in',
+        quantity,
+        notes:      notes || null,
+        supplier:   supplier || null,
+        created_by: req.user!.id,
+      })
+      .select()
+      .single()
+    if (mvErr) return res.status(500).json({ error: mvErr.message })
+    return res.status(201).json(movement)
   } catch (e: unknown) {
     const msg = e instanceof Error ? e.message : 'Internal server error'
     return res.status(500).json({ error: msg })

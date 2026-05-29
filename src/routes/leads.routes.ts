@@ -51,6 +51,7 @@ router.post('/', async (req: Request, res: Response) => {
       return res.status(400).json({ error: 'No branch resolved. Pass ?branch_id= for developer/owner.', code: 'NO_BRANCH' })
     }
 
+    const assignedTo = (typeof assigned_to === 'string' ? assigned_to.trim() : '') || null
     const { data, error } = await supabase
       .from('leads')
       .insert({
@@ -59,7 +60,7 @@ router.post('/', async (req: Request, res: Response) => {
         phone: phone || null,
         source: source || 'manual',
         notes: notes || null,
-        assigned_to: assigned_to || null,
+        assigned_to: assignedTo,
         created_by: req.user!.id,
         status: 'new',
       })
@@ -136,6 +137,7 @@ router.patch('/:id/status', async (req: Request, res: Response) => {
 
   const updates: Record<string, unknown> = { status, updated_at: new Date().toISOString() }
   let newClientId: string | null = null
+  let clientRecord: { id: string; full_name: string; phone: string | null } | null = null
 
   // success + no client yet → create draft client
   if (status === 'success' && !lead.client_id) {
@@ -147,11 +149,12 @@ router.patch('/:id/status', async (req: Request, res: Response) => {
         phone:     lead.phone ?? null,
         status:    'draft',
       })
-      .select('id')
+      .select('id, full_name, phone')
       .single()
 
     if (!clientErr && newClient) {
       newClientId = newClient.id
+      clientRecord = { id: newClient.id, full_name: newClient.full_name, phone: newClient.phone }
       updates.client_id = newClientId
     }
   }
@@ -179,7 +182,7 @@ router.patch('/:id/status', async (req: Request, res: Response) => {
     })
   }
 
-  return res.json({ ...data, client_id: newClientId ?? data.client_id })
+  return res.json({ lead: { ...data, client_id: newClientId ?? data.client_id }, client: clientRecord })
 })
 
 // DELETE /leads/:id — удалить лид

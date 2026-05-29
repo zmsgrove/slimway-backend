@@ -1,108 +1,120 @@
 import { Router, Request, Response } from 'express'
 import { supabase } from '../config/supabase'
 import { requireRole } from '../middleware/role.middleware'
+import { resolveBranchId } from '../utils/resolveBranchId'
+
 const router = Router()
 
-// GET /subscription-templates — шаблоны абонементов филиала
+// GET /subscription-templates
+// developer/owner → all global templates
+// franchisee/staff → only templates connected to their branch
 router.get('/', async (req: Request, res: Response) => {
-  const { branch_id } = req.user!
+  try {
+    const { role } = req.user!
+    const branchId = await resolveBranchId(req.user!)
 
-  let query = supabase
-    .from('subscription_templates')
-    .select('*')
-    .eq('is_active', true)
-    .order('created_at', { ascending: false })
+    if (role === 'developer' || role === 'owner') {
+      const { data, error } = await supabase
+        .from('subscription_templates')
+        .select('*')
+        .order('created_at', { ascending: false })
+      if (error) return res.status(500).json({ error: error.message })
+      return res.json(data)
+    }
 
-  if (branch_id) query = query.eq('branch_id', branch_id)
-
-  const { data, error } = await query
-  if (error) {
-    console.error('Supabase error:', error)
-    return res.status(500).json({ error: error.message, details: error })
+    // franchisee/staff — only branch-connected templates
+    if (!branchId) return res.json([])
+    const { data, error } = await supabase
+      .from('branch_subscription_templates')
+      .select('subscription_templates(*)')
+      .eq('branch_id', branchId)
+    if (error) return res.status(500).json({ error: error.message })
+    const templates = (data || [])
+      .map((r: Record<string, unknown>) => r.subscription_templates)
+      .filter(Boolean)
+    return res.json(templates)
+  } catch (e: unknown) {
+    const msg = e instanceof Error ? e.message : 'Internal server error'
+    return res.status(500).json({ error: msg })
   }
-  return res.json(data)
 })
 
-// POST /subscription-templates — создать шаблон
-router.post('/', requireRole('owner', 'franchisee', 'admin'), async (req: Request, res: Response) => {
-  let branchId = req.user!.branch_id
+// POST /subscription-templates — only developer/owner, creates global template (branch_id = null)
+router.post('/', requireRole('owner'), async (req: Request, res: Response) => {
+  try {
+    const {
+      name,
+      slot_1_type, slot_1_duration_min, slot_1_sessions_total,
+      slot_2_type, slot_2_duration_min, slot_2_sessions_total,
+      validity_days, price,
+    } = req.body
 
-  if (!branchId) {
-    const { data: branch } = await supabase
-      .from('branches')
-      .select('id')
-      .eq('owner_id', req.user!.id)
-      .single()
-    branchId = branch?.id
-  }
+    if (!name?.trim() || !slot_1_type || !slot_1_duration_min || !slot_1_sessions_total) {
+      return res.status(400).json({ error: 'name, slot_1_type, slot_1_duration_min, slot_1_sessions_total required', code: 'VALIDATION_ERROR' })
+    }
 
-  if (!branchId) {
-    return res.status(400).json({ error: 'No branch found', code: 'NO_BRANCH' })
-  }
+    const payload: Record<string, unknown> = {
+      branch_id:             null,
+      name:                  name.trim(),
+      slot_1_type,
+      slot_1_duration_min,
+      slot_1_sessions_total,
+      validity_days:         validity_days ?? 30,
+      price:                 price ?? null,
+      is_active:             true,
+    }
+    if (slot_2_type) {
+      payload.slot_2_type            = slot_2_type
+      payload.slot_2_duration_min    = slot_2_duration_min ?? null
+      payload.slot_2_sessions_total  = slot_2_sessions_total ?? null
+    }
 
-  const {
-    name,
-    slot_1_type, slot_1_duration_min, slot_1_sessions_total,
-    slot_2_type, slot_2_duration_min, slot_2_sessions_total,
-    validity_days, price,
-  } = req.body
-
-  if (!name || !slot_1_type || !slot_1_duration_min || !slot_1_sessions_total) {
-    return res.status(400).json({ error: 'name, slot_1_type, slot_1_duration_min, slot_1_sessions_total required', code: 'VALIDATION_ERROR' })
+    const { data, error } = await supabase.from('subscription_templates').insert(payload).select().single()
+    if (error) return res.status(500).json({ error: error.message })
+    return res.status(201).json(data)
+  } catch (e: unknown) {
+    const msg = e instanceof Error ? e.message : 'Internal server error'
+    return res.status(500).json({ error: msg })
   }
-
-  const payload: Record<string, unknown> = {
-    branch_id: branchId,
-    name,
-    slot_1_type,
-    slot_1_duration_min,
-    slot_1_sessions_total,
-    validity_days: validity_days ?? 30,
-    price: price ?? null,
-    is_active: true,
-  }
-  if (slot_2_type) {
-    payload.slot_2_type = slot_2_type
-    payload.slot_2_duration_min = slot_2_duration_min ?? null
-    payload.slot_2_sessions_total = slot_2_sessions_total ?? null
-  }
-
-  const { data, error } = await supabase.from('subscription_templates').insert(payload).select().single()
-  if (error) {
-    console.error('Supabase error:', error)
-    return res.status(500).json({ error: error.message, details: error })
-  }
-  return res.status(201).json(data)
 })
 
 // PATCH /subscription-templates/:id
-router.patch('/:id', requireRole('owner', 'franchisee', 'admin'), async (req: Request, res: Response) => {
-  const { id } = req.params
-  const { name, validity_days, price, is_active } = req.body
+router.patch('/:id', requireRole('owner'), async (req: Request, res: Response) => {
+  try {
+    const { name, validity_days, price, is_active,
+            slot_1_type, slot_1_duration_min, slot_1_sessions_total,
+            slot_2_type, slot_2_duration_min, slot_2_sessions_total } = req.body
+    const patch: Record<string, unknown> = {}
+    if (name          !== undefined) patch.name          = name
+    if (validity_days !== undefined) patch.validity_days = validity_days
+    if (price         !== undefined) patch.price         = price
+    if (is_active     !== undefined) patch.is_active     = is_active
+    if (slot_1_type   !== undefined) patch.slot_1_type   = slot_1_type
+    if (slot_1_duration_min   !== undefined) patch.slot_1_duration_min   = slot_1_duration_min
+    if (slot_1_sessions_total !== undefined) patch.slot_1_sessions_total = slot_1_sessions_total
+    if (slot_2_type   !== undefined) patch.slot_2_type   = slot_2_type
+    if (slot_2_duration_min   !== undefined) patch.slot_2_duration_min   = slot_2_duration_min
+    if (slot_2_sessions_total !== undefined) patch.slot_2_sessions_total = slot_2_sessions_total
 
-  const patch: Record<string, unknown> = {}
-  if (name !== undefined)          patch.name = name
-  if (validity_days !== undefined) patch.validity_days = validity_days
-  if (price !== undefined)         patch.price = price
-  if (is_active !== undefined)     patch.is_active = is_active
-
-  const { data, error } = await supabase.from('subscription_templates').update(patch).eq('id', id).select().single()
-  if (error) {
-    console.error('Supabase error:', error)
-    return res.status(500).json({ error: error.message, details: error })
+    const { data, error } = await supabase.from('subscription_templates').update(patch).eq('id', req.params.id).select().single()
+    if (error) return res.status(500).json({ error: error.message })
+    return res.json(data)
+  } catch (e: unknown) {
+    const msg = e instanceof Error ? e.message : 'Internal server error'
+    return res.status(500).json({ error: msg })
   }
-  return res.json(data)
 })
 
-// DELETE /subscription-templates/:id — soft delete (deactivate)
-router.delete('/:id', requireRole('owner', 'franchisee', 'admin'), async (req: Request, res: Response) => {
-  const { id } = req.params
-  const { error } = await supabase.from('subscription_templates').update({ is_active: false }).eq('id', id)
-  if (error) {
-    console.error('Supabase error:', error)
-    return res.status(500).json({ error: error.message, details: error })
+// DELETE /subscription-templates/:id (soft delete)
+router.delete('/:id', requireRole('owner'), async (req: Request, res: Response) => {
+  try {
+    const { error } = await supabase.from('subscription_templates').update({ is_active: false }).eq('id', req.params.id)
+    if (error) return res.status(500).json({ error: error.message })
+    return res.status(204).send()
+  } catch (e: unknown) {
+    const msg = e instanceof Error ? e.message : 'Internal server error'
+    return res.status(500).json({ error: msg })
   }
-  return res.status(204).send()
 })
 
 export default router

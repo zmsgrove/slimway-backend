@@ -26,6 +26,8 @@ import warehouseRouter from './routes/warehouse.routes'
 import departmentsRouter from './routes/departments.routes'
 import positionsRouter from './routes/positions.routes'
 import analyticsRouter from './routes/analytics.routes'
+import branchSubscriptionTemplatesRouter from './routes/branch-subscription-templates.routes'
+import catalogRouter from './routes/catalog.routes'
 
 dotenv.config()
 
@@ -147,6 +149,8 @@ app.use('/api/v1/warehouse', warehouseRouter)
 app.use('/api/v1/departments', departmentsRouter)
 app.use('/api/v1/positions', positionsRouter)
 app.use('/api/v1/analytics', analyticsRouter)
+app.use('/api/v1/branch-subscription-templates', branchSubscriptionTemplatesRouter)
+app.use('/api/v1/catalog', catalogRouter)
 
 // 404
 app.use((_req, res) => {
