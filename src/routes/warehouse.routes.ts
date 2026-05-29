@@ -35,6 +35,7 @@ router.get('/', async (req: Request, res: Response) => {
       .select('*, catalog_items(name, category, unit, sku)')
       .order('name')
     if (branchId) query = query.eq('branch_id', branchId)
+    query = query.is('deleted_at', null)
     const { data, error } = await query
     if (error) return res.status(500).json({ error: error.message })
     const withLowStock = (data || []).map((item: Record<string, unknown>) => ({
@@ -189,10 +190,13 @@ router.patch('/:id', requireRole('owner'), async (req: Request, res: Response) =
   }
 })
 
-// DELETE /warehouse/:id
-router.delete('/:id', async (req: Request, res: Response) => {
+// DELETE /warehouse/:id — soft delete
+router.delete('/:id', requireRole('owner'), async (req: Request, res: Response) => {
   try {
-    const { error } = await supabase.from('warehouse_items').delete().eq('id', req.params.id)
+    const { error } = await supabase
+      .from('warehouse_items')
+      .update({ deleted_at: new Date().toISOString() })
+      .eq('id', req.params.id)
     if (error) return res.status(500).json({ error: error.message })
     return res.status(204).send()
   } catch (e: unknown) {
