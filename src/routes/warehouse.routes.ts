@@ -26,15 +26,32 @@ router.get('/export', async (req: Request, res: Response) => {
   }
 })
 
-// GET /warehouse
+// GET /warehouse — supports ?branch_ids=id1,id2 for multi-branch view
 router.get('/', async (req: Request, res: Response) => {
   try {
     const branchId = await resolveBranchId(req.user!)
+
+    // Multi-branch support
+    const branchIdsParam = req.query.branch_ids as string | undefined
+    const branchIds = branchIdsParam
+      ? branchIdsParam.split(',').map(s => s.trim()).filter(Boolean)
+      : null
+
     let query = supabase
       .from('warehouse_items')
       .select('*, catalog_items(name, category, unit, sku)')
       .order('name')
-    if (branchId) query = query.eq('branch_id', branchId)
+
+    if (branchIds && branchIds.length > 0) {
+      if (branchIds.length === 1) {
+        query = query.eq('branch_id', branchIds[0])
+      } else {
+        query = query.in('branch_id', branchIds)
+      }
+    } else if (branchId) {
+      query = query.eq('branch_id', branchId)
+    }
+
     query = query.is('deleted_at', null)
     const { data, error } = await query
     if (error) return res.status(500).json({ error: error.message })
