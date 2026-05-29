@@ -51,4 +51,17 @@ router.post('/', requireRole('owner'), async (req: Request, res: Response) => {
   return res.status(201).json(data)
 })
 
+// DELETE /branches/:id — только developer, требует { confirm: true }
+router.delete('/:id', requireRole('developer'), async (req: Request, res: Response) => {
+  if (!req.body?.confirm) {
+    return res.status(400).json({ error: 'confirm: true required', code: 'VALIDATION_ERROR' })
+  }
+  const { error } = await supabase
+    .from('branches')
+    .update({ deleted_at: new Date().toISOString() })
+    .eq('id', req.params.id)
+  if (error) return res.status(500).json({ error: error.message })
+  return res.status(200).json({ ok: true })
+})
+
 export default router
