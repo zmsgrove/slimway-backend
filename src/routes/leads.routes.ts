@@ -42,7 +42,7 @@ router.get('/', async (req: Request, res: Response) => {
 router.post('/', async (req: Request, res: Response) => {
   try {
     const branchId = await resolveBranchId(req.user!)
-    const { full_name, phone, source, notes, assigned_to } = req.body
+    const { full_name, phone, source, notes, assigned_to, desired_template_id } = req.body
 
     if (!full_name) {
       return res.status(400).json({ error: 'full_name required', code: 'VALIDATION_ERROR' })
@@ -75,6 +75,8 @@ router.post('/', async (req: Request, res: Response) => {
         assigned_to: resolvedAssignedTo,
         created_by: req.user!.id,
         status: 'new',
+        desired_template_id: desired_template_id || null,
+        status_changed_at: new Date().toISOString(),
       })
       .select()
       .single()
@@ -107,13 +109,14 @@ router.get('/:id', async (req: Request, res: Response) => {
 // PATCH /leads/:id — обновить лид
 router.patch('/:id', async (req: Request, res: Response) => {
   const { id } = req.params
-  const { full_name, phone, source, notes, assigned_to, status, client_id } = req.body
+  const { full_name, phone, source, notes, assigned_to, status, client_id, desired_template_id } = req.body
 
   const updates: Record<string, unknown> = { updated_at: new Date().toISOString() }
-  if (full_name   !== undefined) updates.full_name   = full_name
-  if (phone       !== undefined) updates.phone       = phone
-  if (source      !== undefined) updates.source      = source
-  if (notes       !== undefined) updates.notes       = notes
+  if (full_name            !== undefined) updates.full_name            = full_name
+  if (phone                !== undefined) updates.phone                = phone
+  if (source               !== undefined) updates.source               = source
+  if (notes                !== undefined) updates.notes                = notes
+  if (desired_template_id  !== undefined) updates.desired_template_id  = desired_template_id
   if (assigned_to !== undefined) {
     if (assigned_to) {
       const { data: emp } = await supabase
@@ -158,7 +161,7 @@ router.patch('/:id/status', async (req: Request, res: Response) => {
 
   if (leadErr || !lead) return res.status(404).json({ error: 'Lead not found' })
 
-  const updates: Record<string, unknown> = { status, updated_at: new Date().toISOString() }
+  const updates: Record<string, unknown> = { status, updated_at: new Date().toISOString(), status_changed_at: new Date().toISOString() }
   let newClientId: string | null = null
   let clientRecord: { id: string; full_name: string; phone: string | null } | null = null
 

@@ -103,13 +103,14 @@ router.post('/', requireRole('owner', 'franchisee', 'admin'), async (req: Reques
 router.patch('/:id', requireRole('owner', 'franchisee', 'admin'), async (req: Request, res: Response) => {
   try {
     const { id } = req.params
-    const { status, date_end, slot_1_sessions_left, slot_2_sessions_left } = req.body
+    const { status, date_end, slot_1_sessions_left, slot_2_sessions_left, cancellation_reason } = req.body
 
     const patch: Record<string, unknown> = {}
     if (status               !== undefined) patch.status               = status
     if (date_end             !== undefined) patch.date_end             = date_end
     if (slot_1_sessions_left !== undefined) patch.slot_1_sessions_left = slot_1_sessions_left
     if (slot_2_sessions_left !== undefined) patch.slot_2_sessions_left = slot_2_sessions_left
+    if (cancellation_reason  !== undefined) patch.cancellation_reason  = cancellation_reason
 
     const { data, error } = await supabase
       .from('subscriptions')
@@ -123,6 +124,99 @@ router.patch('/:id', requireRole('owner', 'franchisee', 'admin'), async (req: Re
   } catch (e: unknown) {
     const msg = e instanceof Error ? e.message : 'Internal server error'
     return res.status(500).json({ error: msg })
+  }
+})
+
+// POST /subscriptions/:id/freeze
+router.post('/:id/freeze', requireRole('owner', 'franchisee', 'admin'), async (req: Request, res: Response) => {
+  try {
+    const { id } = req.params
+    const { frozen_until } = req.body
+
+    if (!frozen_until) {
+      return res.status(400).json({ error: 'frozen_until required', code: 'VALIDATION_ERROR' })
+    }
+
+    const { data: sub, error: subErr } = await supabase
+      .from('subscriptions')
+      .select('*')
+      .eq('id', id)
+      .single()
+
+    if (subErr || !sub) return res.status(404).json({ error: 'Subscription not found' })
+    if (sub.status !== 'active') return res.status(400).json({ error: 'Only active subscriptions can be frozen' })
+
+    const { data, error } = await supabase
+      .from('subscriptions')
+      .update({ status: 'frozen', frozen_at: new Date().toISOString(), frozen_until })
+      .eq('id', id)
+      .select()
+      .single()
+
+    if (error) return res.status(500).json({ error: error.message })
+    return res.json(data)
+  } catch (e: unknown) {
+    return res.status(500).json({ error: e instanceof Error ? e.message : 'Internal server error' })
+  }
+})
+
+// POST /subscriptions/:id/unfreeze
+router.post('/:id/unfreeze', requireRole('owner', 'franchisee', 'admin'), async (req: Request, res: Response) => {
+  try {
+    const { id } = req.params
+
+    const { data: sub, error: subErr } = await supabase
+      .from('subscriptions')
+      .select('*')
+      .eq('id', id)
+      .single()
+
+    if (subErr || !sub) return res.status(404).json({ error: 'Subscription not found' })
+    if (sub.status !== 'frozen') return res.status(400).json({ error: 'Only frozen subscriptions can be unfrozen' })
+
+    const now = new Date()
+    const frozenAt = new Date(sub.frozen_at)
+    const daysFreezed = Math.ceil((now.getTime() - frozenAt.getTime()) / (1000 * 60 * 60 * 24))
+
+    let newDateEnd = sub.date_end
+    if (sub.date_end) {
+      const dateEnd = new Date(sub.date_end)
+      dateEnd.setDate(dateEnd.getDate() + daysFreezed)
+      newDateEnd = dateEnd.toISOString().split('T')[0]
+    }
+
+    const { data, error } = await supabase
+      .from('subscriptions')
+      .update({
+        status: 'active',
+        date_end: newDateEnd,
+        freeze_days_used: (sub.freeze_days_used ?? 0) + daysFreezed,
+      })
+      .eq('id', id)
+      .select()
+      .single()
+
+    if (error) return res.status(500).json({ error: error.message })
+    return res.json(data)
+  } catch (e: unknown) {
+    return res.status(500).json({ error: e instanceof Error ? e.message : 'Internal server error' })
+  }
+})
+
+// GET /subscriptions/:id/renewals
+router.get('/:id/renewals', async (req: Request, res: Response) => {
+  try {
+    const { id } = req.params
+    const { data, error } = await supabase
+      .from('subscription_renewals')
+      .select('*, profiles(full_name)')
+      .eq('subscription_id', id)
+      .order('created_at', { ascending: false })
+
+    if (error) return res.status(500).json({ error: error.message })
+    return res.json(data ?? [])
+  } catch (e: unknown) {
+    return res.status(500).json({ error: e instanceof Error ? e.message : 'Internal server error' })
   }
 })
 

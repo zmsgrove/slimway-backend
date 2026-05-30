@@ -51,13 +51,13 @@ router.get('/:id', async (req: Request, res: Response) => {
 // POST /clients — создать клиента
 router.post('/', requireRole('owner', 'franchisee', 'admin'), async (req: Request, res: Response) => {
   const branchId = await resolveBranchId(req.user!)
-  const { full_name, phone, email, birth_date, notes } = req.body
+  const { full_name, phone, email, birth_date, notes, source, tags } = req.body
 
   if (!full_name) return res.status(400).json({ error: 'full_name is required', code: 'VALIDATION_ERROR' })
 
   const { data, error } = await supabase
     .from('clients')
-    .insert({ full_name, phone, email, birth_date, notes, branch_id: branchId })
+    .insert({ full_name, phone, email, birth_date, notes, source: source || null, tags: tags || null, branch_id: branchId })
     .select()
     .single()
 
@@ -71,15 +71,18 @@ router.post('/', requireRole('owner', 'franchisee', 'admin'), async (req: Reques
 // PATCH /clients/:id — обновить клиента
 router.patch('/:id', requireRole('owner', 'franchisee', 'admin'), async (req: Request, res: Response) => {
   const { id } = req.params
-  const { full_name, phone, email, birth_date, notes, status } = req.body
+  const { full_name, phone, email, birth_date, notes, status, tags, source, avatar_url } = req.body
 
   const patch: Record<string, unknown> = {}
-  if (full_name  !== undefined) patch.full_name  = full_name
-  if (phone      !== undefined) patch.phone      = phone
-  if (email      !== undefined) patch.email      = email
-  if (birth_date !== undefined) patch.birth_date = birth_date
-  if (notes      !== undefined) patch.notes      = notes
-  if (status     !== undefined) patch.status     = status
+  if (full_name   !== undefined) patch.full_name   = full_name
+  if (phone       !== undefined) patch.phone       = phone
+  if (email       !== undefined) patch.email       = email
+  if (birth_date  !== undefined) patch.birth_date  = birth_date
+  if (notes       !== undefined) patch.notes       = notes
+  if (status      !== undefined) patch.status      = status
+  if (tags        !== undefined) patch.tags        = tags
+  if (source      !== undefined) patch.source      = source
+  if (avatar_url  !== undefined) patch.avatar_url  = avatar_url
 
   const { data, error } = await supabase
     .from('clients')

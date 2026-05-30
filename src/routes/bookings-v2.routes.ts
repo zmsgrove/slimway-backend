@@ -225,6 +225,30 @@ router.delete('/:id', requireRole('owner', 'franchisee', 'admin'), async (req: R
   return res.status(204).send()
 })
 
+// PATCH /bookings-v2/:id — отметить посещаемость
+router.patch('/:id', async (req: Request, res: Response) => {
+  try {
+    const { id } = req.params
+    const { attended } = req.body
+
+    if (attended === undefined) {
+      return res.status(400).json({ error: 'attended required', code: 'VALIDATION_ERROR' })
+    }
+
+    const { data, error } = await supabase
+      .from('bookings_v2')
+      .update({ attended })
+      .eq('id', id)
+      .select()
+      .single()
+
+    if (error) return res.status(500).json({ error: error.message })
+    return res.json(data)
+  } catch (e: unknown) {
+    return res.status(500).json({ error: e instanceof Error ? e.message : 'Internal server error' })
+  }
+})
+
 // PATCH /bookings-v2/:id/reschedule — перенести бронь
 router.patch('/:id/reschedule', async (req: Request, res: Response) => {
   const { id } = req.params

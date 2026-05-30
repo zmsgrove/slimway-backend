@@ -12,7 +12,7 @@ router.get('/', async (req: Request, res: Response) => {
 
   let query = supabase
     .from('schedule_slots')
-    .select('*, devices(id, type, number, device_group, status)')
+    .select('*, devices(id, type, number, device_group, status), bookings_v2!booking_id(attended)')
     .order('time_start', { ascending: true })
 
   if (branch_id)  query = query.eq('branch_id', branch_id)
