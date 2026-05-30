@@ -145,6 +145,7 @@ router.patch('/:id', async (req: Request, res: Response) => {
 
 // PATCH /leads/:id/status — сменить статус
 router.patch('/:id/status', async (req: Request, res: Response) => {
+  try {
   const { id } = req.params
   const { status } = req.body
 
@@ -167,21 +168,27 @@ router.patch('/:id/status', async (req: Request, res: Response) => {
 
   // success + no client yet → create draft client
   if (status === 'success' && !lead.client_id) {
-    const { data: newClient, error: clientErr } = await supabase
-      .from('clients')
-      .insert({
-        branch_id: lead.branch_id,
-        full_name: lead.full_name,
-        phone:     lead.phone ?? null,
-        status:    'draft',
-      })
-      .select('id, full_name, phone')
-      .single()
+    try {
+      const { data: newClient, error: clientErr } = await supabase
+        .from('clients')
+        .insert({
+          branch_id: lead.branch_id,
+          full_name: lead.full_name,
+          phone:     lead.phone ?? null,
+          status:    'draft',
+        })
+        .select('id, full_name, phone')
+        .single()
 
-    if (!clientErr && newClient) {
-      newClientId = newClient.id
-      clientRecord = { id: newClient.id, full_name: newClient.full_name, phone: newClient.phone }
-      updates.client_id = newClientId
+      if (!clientErr && newClient) {
+        newClientId = newClient.id
+        clientRecord = { id: newClient.id, full_name: newClient.full_name, phone: newClient.phone }
+        updates.client_id = newClientId
+      } else if (clientErr) {
+        console.error('[leads] client auto-create failed:', clientErr)
+      }
+    } catch (clientEx) {
+      console.error('[leads] client auto-create exception:', clientEx)
     }
   }
 
@@ -192,7 +199,10 @@ router.patch('/:id/status', async (req: Request, res: Response) => {
     .select()
     .single()
 
-  if (error) return res.status(500).json({ error: error.message })
+  if (error) {
+    console.error('[leads] status update failed:', error)
+    return res.status(500).json({ error: error.message })
+  }
 
   // audit log
   if (newClientId) {
@@ -209,6 +219,10 @@ router.patch('/:id/status', async (req: Request, res: Response) => {
   }
 
   return res.json({ lead: { ...data, client_id: newClientId ?? data.client_id }, client: clientRecord })
+  } catch (ex) {
+    console.error('[leads] PATCH /:id/status unhandled exception:', ex)
+    return res.status(500).json({ error: 'Internal server error' })
+  }
 })
 
 // DELETE /leads/:id — удалить лид
