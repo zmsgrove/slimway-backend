@@ -12,16 +12,38 @@ router.get('/', async (req: Request, res: Response) => {
 
   let query = supabase
     .from('schedule_slots')
-    .select('*, devices(id, type, number, device_group, status), bookings_v2!booking_id(attended)')
+    .select('*, devices(id, type, number, device_group, status)')
     .order('time_start', { ascending: true })
 
   if (branch_id)  query = query.eq('branch_id', branch_id)
   if (date)       query = query.eq('date', date as string)
   if (device_id)  query = query.eq('device_id', device_id as string)
 
-  const { data, error } = await query
+  const { data: slots, error } = await query
   if (error) return res.status(500).json({ error: error.message })
-  return res.json(data)
+
+  // booking_id has no FK constraint, so join attended status manually
+  const bookingIds = (slots ?? [])
+    .map((s: { booking_id: string | null }) => s.booking_id)
+    .filter(Boolean) as string[]
+
+  if (bookingIds.length > 0) {
+    const { data: bookings } = await supabase
+      .from('bookings_v2')
+      .select('id, attended')
+      .in('id', bookingIds)
+
+    if (bookings) {
+      const attendedMap = new Map(bookings.map((b: { id: string; attended: boolean | null }) => [b.id, b.attended]))
+      for (const slot of slots ?? []) {
+        if (slot.booking_id) {
+          slot.bookings_v2 = { attended: attendedMap.get(slot.booking_id) ?? null }
+        }
+      }
+    }
+  }
+
+  return res.json(slots)
 })
 
 // POST /schedule-slots/bulk — массовое создание ячеек (upsert, пропускает дубли)
