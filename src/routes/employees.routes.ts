@@ -1,14 +1,20 @@
 import { Router, Request, Response } from 'express'
 import { supabase } from '../config/supabase'
-import { requireRole } from '../middleware/role.middleware'
+import { requirePermission } from '../middleware/permission.middleware'
 import { resolveBranchId } from '../utils/resolveBranchId'
+import { CREATION_RULES } from '../config/permissions'
+import type { Role } from '../config/permissions'
 
 const router = Router()
 
+// position → role mapping
 const POSITION_ROLE: Record<string, string> = {
-  manager:   'franchisee',
-  staff:     'admin',
-  technical: 'technical',
+  manager:           'franchisee',
+  franchisee:        'franchisee',
+  admin:             'admin',
+  staff:             'staff',
+  manager_assistant: 'staff',
+  technical:         'technical',
 }
 
 function composeName(first: string, last: string, middle?: string): string {
@@ -16,10 +22,10 @@ function composeName(first: string, last: string, middle?: string): string {
 }
 
 // GET /employees
-router.get('/', async (req: Request, res: Response) => {
+router.get('/', requirePermission('employees', 'view'), async (req: Request, res: Response) => {
   try {
     const branchId = await resolveBranchId(req.user!)
-    let query = supabase.from('employees').select('*').order('full_name')
+    let query = supabase.from('employees').select('*, profiles(role)').order('full_name')
     if (branchId) query = query.eq('branch_id', branchId)
     const { data, error } = await query
     if (error) return res.status(500).json({ error: error.message })
@@ -30,9 +36,10 @@ router.get('/', async (req: Request, res: Response) => {
   }
 })
 
-// POST /employees — создать сотрудника с auth-аккаунтом
-router.post('/', requireRole('owner', 'franchisee'), async (req: Request, res: Response) => {
+// POST /employees
+router.post('/', requirePermission('employees', 'create'), async (req: Request, res: Response) => {
   try {
+    const actorRole = req.user!.role as Role
     const branchId = await resolveBranchId(req.user!)
     if (!branchId) return res.status(400).json({ error: 'No branch found', code: 'NO_BRANCH' })
 
@@ -53,10 +60,16 @@ router.post('/', requireRole('owner', 'franchisee'), async (req: Request, res: R
       return res.status(400).json({ error: 'position required', code: 'VALIDATION_ERROR' })
     }
 
-    const mappedRole = POSITION_ROLE[position] ?? 'admin'
-    const full_name  = composeName(first_name, last_name, middle_name)
+    const mappedRole = (POSITION_ROLE[position] ?? 'staff') as Role
 
-    // 1. Create auth user
+    // Проверяем, может ли actor создавать такую роль
+    const allowedRoles = CREATION_RULES[actorRole] ?? []
+    if (!allowedRoles.includes(mappedRole)) {
+      return res.status(403).json({ error: `Недостаточно прав для создания роли ${mappedRole}`, code: 'FORBIDDEN' })
+    }
+
+    const full_name = composeName(first_name, last_name, middle_name)
+
     const { data: authData, error: authError } = await supabase.auth.admin.createUser({
       email,
       password,
@@ -69,7 +82,6 @@ router.post('/', requireRole('owner', 'franchisee'), async (req: Request, res: R
 
     const userId = authData.user.id
 
-    // 2. Create profile
     const { error: profileError } = await supabase.from('profiles').upsert({
       id:        userId,
       branch_id: branchId,
@@ -82,7 +94,6 @@ router.post('/', requireRole('owner', 'franchisee'), async (req: Request, res: R
       return res.status(500).json({ error: profileError.message })
     }
 
-    // 3. Create employee
     const { data: employee, error: empError } = await supabase
       .from('employees')
       .insert({
@@ -114,22 +125,21 @@ router.post('/', requireRole('owner', 'franchisee'), async (req: Request, res: R
 })
 
 // PATCH /employees/:id
-router.patch('/:id', requireRole('owner', 'franchisee', 'admin'), async (req: Request, res: Response) => {
+router.patch('/:id', requirePermission('employees', 'edit'), async (req: Request, res: Response) => {
   try {
     const { id } = req.params
     const { first_name, last_name, middle_name, full_name, phone, birth_date, position, department, address } = req.body
     const patch: Record<string, unknown> = {}
-    if (full_name    !== undefined) patch.full_name    = full_name
-    if (first_name   !== undefined) patch.first_name   = first_name
-    if (last_name    !== undefined) patch.last_name    = last_name
-    if (middle_name  !== undefined) patch.middle_name  = middle_name
-    if (phone        !== undefined) patch.phone        = phone
-    if (birth_date   !== undefined) patch.birth_date   = birth_date
-    if (position     !== undefined) patch.position     = position
-    if (department   !== undefined) patch.department   = department
-    if (address      !== undefined) patch.address      = address
+    if (full_name   !== undefined) patch.full_name   = full_name
+    if (first_name  !== undefined) patch.first_name  = first_name
+    if (last_name   !== undefined) patch.last_name   = last_name
+    if (middle_name !== undefined) patch.middle_name = middle_name
+    if (phone       !== undefined) patch.phone       = phone
+    if (birth_date  !== undefined) patch.birth_date  = birth_date
+    if (position    !== undefined) patch.position    = position
+    if (department  !== undefined) patch.department  = department
+    if (address     !== undefined) patch.address     = address
 
-    // Recompute full_name if name parts provided
     if (first_name !== undefined && last_name !== undefined) {
       patch.full_name = composeName(first_name, last_name, middle_name)
     }
@@ -143,12 +153,70 @@ router.patch('/:id', requireRole('owner', 'franchisee', 'admin'), async (req: Re
   }
 })
 
-// DELETE /employees/:id — только owner и franchisee
-router.delete('/:id', requireRole('owner', 'franchisee'), async (req: Request, res: Response) => {
+// PATCH /employees/:id/role — только developer
+router.patch('/:id/role', async (req: Request, res: Response) => {
+  try {
+    if (req.user!.role !== 'developer') {
+      return res.status(403).json({ error: 'Только developer может менять роль', code: 'FORBIDDEN' })
+    }
+
+    const { id } = req.params
+    const { role, branch_id } = req.body
+
+    if (!role) {
+      return res.status(400).json({ error: 'role required', code: 'VALIDATION_ERROR' })
+    }
+
+    const validRoles: Role[] = ['owner','franchisee','admin','staff','technical','developer']
+    if (!validRoles.includes(role as Role)) {
+      return res.status(400).json({ error: 'Invalid role', code: 'VALIDATION_ERROR' })
+    }
+
+    // Получаем profile_id сотрудника
+    const { data: emp, error: empErr } = await supabase
+      .from('employees')
+      .select('profile_id')
+      .eq('id', id)
+      .single()
+
+    if (empErr || !emp) return res.status(404).json({ error: 'Employee not found', code: 'NOT_FOUND' })
+
+    const newBranchId = branch_id || null
+
+    // Обновляем auth metadata
+    if (emp.profile_id) {
+      await supabase.auth.admin.updateUserById(emp.profile_id, {
+        app_metadata: { role, branch_id: newBranchId },
+      })
+
+      // Обновляем профиль
+      await supabase.from('profiles').update({
+        role,
+        branch_id: newBranchId,
+      }).eq('id', emp.profile_id)
+    }
+
+    // Обновляем запись сотрудника
+    const { data, error } = await supabase
+      .from('employees')
+      .update({ branch_id: newBranchId })
+      .eq('id', id)
+      .select()
+      .single()
+
+    if (error) return res.status(500).json({ error: error.message })
+    return res.json(data)
+  } catch (e: unknown) {
+    const msg = e instanceof Error ? e.message : 'Internal server error'
+    return res.status(500).json({ error: msg })
+  }
+})
+
+// DELETE /employees/:id
+router.delete('/:id', requirePermission('employees', 'delete'), async (req: Request, res: Response) => {
   try {
     const { id } = req.params
 
-    // Remove auth user if exists
     const { data: emp } = await supabase.from('employees').select('profile_id').eq('id', id).single()
     if (emp?.profile_id) {
       await supabase.auth.admin.deleteUser(emp.profile_id)

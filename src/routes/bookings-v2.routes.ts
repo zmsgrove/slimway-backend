@@ -1,13 +1,15 @@
 import { Router, Request, Response } from 'express'
 import { supabase } from '../config/supabase'
-import { requireRole } from '../middleware/role.middleware'
+import { requirePermission } from '../middleware/permission.middleware'
+import { can } from '../config/permissions'
+import type { PermissionOverride, Role } from '../config/permissions'
 import { resolveBranchId } from '../utils/resolveBranchId'
 import { logAction } from '../utils/logAction'
 
 const router = Router()
 
 // POST /bookings-v2
-router.post('/', requireRole('owner', 'franchisee', 'admin'), async (req: Request, res: Response) => {
+router.post('/', requirePermission('bookings', 'create'), async (req: Request, res: Response) => {
   const [branchId, created_by] = [await resolveBranchId(req.user!), req.user!.id]
   const { client_id, subscription_id, slot_1_schedule_slot_id, date } = req.body
 
@@ -131,7 +133,7 @@ router.post('/', requireRole('owner', 'franchisee', 'admin'), async (req: Reques
 })
 
 // GET /bookings-v2/:id
-router.get('/:id', requireRole('owner', 'franchisee', 'admin'), async (req: Request, res: Response) => {
+router.get('/:id', requirePermission('bookings', 'view'), async (req: Request, res: Response) => {
   try {
     const { id } = req.params
 
@@ -166,9 +168,10 @@ router.get('/:id', requireRole('owner', 'franchisee', 'admin'), async (req: Requ
   }
 })
 
-// DELETE /bookings-v2/:id — отменить бронь
-router.delete('/:id', requireRole('owner', 'franchisee', 'admin'), async (req: Request, res: Response) => {
+// DELETE /bookings-v2/:id — отменить бронь с проверкой времени
+router.delete('/:id', async (req: Request, res: Response) => {
   const { id } = req.params
+  const role = req.user!.role as Role
 
   const { data: booking } = await supabase
     .from('bookings_v2')
@@ -178,16 +181,25 @@ router.delete('/:id', requireRole('owner', 'franchisee', 'admin'), async (req: R
 
   if (!booking) return res.status(404).json({ error: 'Booking not found', code: 'NOT_FOUND' })
 
+  // Определяем тип отмены по времени
   const slot = (booking as Record<string, unknown>).schedule_slots as { date: string; time_start: string } | null
+  let cancelAction: 'cancel_early' | 'cancel_late' = 'cancel_early'
   if (slot) {
     const slotDateTime = new Date(`${slot.date}T${slot.time_start}`)
     const diffMs = slotDateTime.getTime() - Date.now()
     if (diffMs < 24 * 60 * 60 * 1000) {
-      const role = req.user!.role
-      if (!['developer', 'owner', 'franchisee'].includes(role)) {
-        return res.status(409).json({ error: 'Cannot cancel less than 24h before slot', code: 'TOO_LATE' })
-      }
+      cancelAction = 'cancel_late'
     }
+  }
+
+  // Загружаем overrides для этой роли
+  const { data: overrides } = await supabase
+    .from('permission_overrides')
+    .select('*')
+    .eq('role', role)
+
+  if (!can(role, 'bookings', cancelAction, (overrides ?? []) as PermissionOverride[])) {
+    return res.status(403).json({ error: 'Cannot cancel less than 24h before slot', code: 'TOO_LATE' })
   }
 
   await supabase.from('schedule_slots').update({ status: 'free', booking_id: null }).eq('booking_id', id)
@@ -208,7 +220,6 @@ router.delete('/:id', requireRole('owner', 'franchisee', 'admin'), async (req: R
     await supabase.from('subscriptions').update(patch).eq('id', booking.subscription_id)
   }
 
-  // audit log
   const { data: profile } = await supabase.from('profiles').select('full_name').eq('id', req.user!.id).single()
   await logAction({
     branch_id:   booking.branch_id as string,
@@ -226,7 +237,7 @@ router.delete('/:id', requireRole('owner', 'franchisee', 'admin'), async (req: R
 })
 
 // PATCH /bookings-v2/:id — отметить посещаемость
-router.patch('/:id', async (req: Request, res: Response) => {
+router.patch('/:id', requirePermission('bookings', 'view'), async (req: Request, res: Response) => {
   try {
     const { id } = req.params
     const { attended } = req.body
@@ -249,10 +260,11 @@ router.patch('/:id', async (req: Request, res: Response) => {
   }
 })
 
-// PATCH /bookings-v2/:id/reschedule — перенести бронь
-router.patch('/:id/reschedule', async (req: Request, res: Response) => {
+// PATCH /bookings-v2/:id/reschedule
+router.patch('/:id/reschedule', requirePermission('bookings', 'create'), async (req: Request, res: Response) => {
   const { id } = req.params
   const { new_slot_1_id, new_slot_2_id } = req.body
+  const role = req.user!.role as Role
 
   if (!new_slot_1_id) {
     return res.status(400).json({ error: 'new_slot_1_id required', code: 'VALIDATION_ERROR' })
@@ -266,7 +278,6 @@ router.patch('/:id/reschedule', async (req: Request, res: Response) => {
 
   if (bookErr || !booking) return res.status(404).json({ error: 'Booking not found', code: 'NOT_FOUND' })
 
-  // Check timing restriction
   const { data: oldSlot1 } = await supabase
     .from('schedule_slots')
     .select('date, time_start')
@@ -277,14 +288,16 @@ router.patch('/:id/reschedule', async (req: Request, res: Response) => {
     const slotDateTime = new Date(`${oldSlot1.date}T${oldSlot1.time_start}`)
     const diffMs = slotDateTime.getTime() - Date.now()
     if (diffMs < 24 * 60 * 60 * 1000) {
-      const role = req.user!.role
-      if (!['developer', 'owner', 'franchisee'].includes(role)) {
+      const { data: overrides } = await supabase
+        .from('permission_overrides')
+        .select('*')
+        .eq('role', role)
+      if (!can(role, 'bookings', 'cancel_late', (overrides ?? []) as PermissionOverride[])) {
         return res.status(409).json({ error: 'Cannot reschedule less than 24h before slot', code: 'TOO_LATE' })
       }
     }
   }
 
-  // Validate new slot 1
   const { data: newSlot1, error: ns1Err } = await supabase
     .from('schedule_slots')
     .select('*')
@@ -296,7 +309,6 @@ router.patch('/:id/reschedule', async (req: Request, res: Response) => {
 
   let resolvedSlot2Id: string | null = new_slot_2_id ?? null
 
-  // If subscription has slot_2 and new_slot_2_id not provided — auto-find
   const { data: sub } = await supabase
     .from('subscriptions')
     .select('slot_2_type, branch_id')
@@ -328,7 +340,6 @@ router.patch('/:id/reschedule', async (req: Request, res: Response) => {
     }
   }
 
-  // If slot_2 required but not found
   if (sub?.slot_2_type && !resolvedSlot2Id) {
     return res.status(409).json({
       error: 'No free slot 2 available right after new slot 1',
@@ -337,12 +348,10 @@ router.patch('/:id/reschedule', async (req: Request, res: Response) => {
     })
   }
 
-  // Free old slots
   await supabase.from('schedule_slots')
     .update({ status: 'free', booking_id: null })
     .eq('booking_id', id)
 
-  // Book new slots
   await supabase.from('schedule_slots')
     .update({ status: 'booked', booking_id: id })
     .eq('id', new_slot_1_id)
@@ -353,7 +362,6 @@ router.patch('/:id/reschedule', async (req: Request, res: Response) => {
       .eq('id', resolvedSlot2Id)
   }
 
-  // Update booking
   const { data: updated, error: updateErr } = await supabase
     .from('bookings_v2')
     .update({
@@ -367,7 +375,6 @@ router.patch('/:id/reschedule', async (req: Request, res: Response) => {
 
   if (updateErr) return res.status(500).json({ error: updateErr.message })
 
-  // audit log
   const { data: profile } = await supabase.from('profiles').select('full_name').eq('id', req.user!.id).single()
   await logAction({
     branch_id:   booking.branch_id as string,

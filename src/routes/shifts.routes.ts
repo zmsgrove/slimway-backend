@@ -1,12 +1,12 @@
 import { Router, Request, Response } from 'express'
 import { supabase } from '../config/supabase'
-import { requireRole } from '../middleware/role.middleware'
+import { requirePermission } from '../middleware/permission.middleware'
 import { resolveBranchId } from '../utils/resolveBranchId'
 
 const router = Router()
 
-// GET /shifts?week_start=YYYY-MM-DD&week_end=YYYY-MM-DD&employee_id=...
-router.get('/', async (req: Request, res: Response) => {
+// GET /shifts
+router.get('/', requirePermission('shifts', 'view'), async (req: Request, res: Response) => {
   try {
     const branchId = await resolveBranchId(req.user!)
     const { week_start, week_end, employee_id } = req.query
@@ -32,7 +32,7 @@ router.get('/', async (req: Request, res: Response) => {
 })
 
 // POST /shifts
-router.post('/', requireRole('owner', 'franchisee', 'admin'), async (req: Request, res: Response) => {
+router.post('/', requirePermission('shifts', 'create'), async (req: Request, res: Response) => {
   try {
     const branchId = await resolveBranchId(req.user!)
     if (!branchId) return res.status(400).json({ error: 'No branch found', code: 'NO_BRANCH' })
@@ -53,8 +53,8 @@ router.post('/', requireRole('owner', 'franchisee', 'admin'), async (req: Reques
   }
 })
 
-// POST /shifts/bulk — массовое создание смен (upsert, пропускает существующие)
-router.post('/bulk', requireRole('owner', 'franchisee', 'admin'), async (req: Request, res: Response) => {
+// POST /shifts/bulk
+router.post('/bulk', requirePermission('shifts', 'create'), async (req: Request, res: Response) => {
   try {
     const branchId = await resolveBranchId(req.user!)
     if (!branchId) return res.status(400).json({ error: 'No branch found', code: 'NO_BRANCH' })
@@ -66,7 +66,6 @@ router.post('/bulk', requireRole('owner', 'franchisee', 'admin'), async (req: Re
       return res.status(400).json({ error: 'shifts array required', code: 'VALIDATION_ERROR' })
     }
 
-    // Find existing shifts to avoid duplicates
     const employeeIds = [...new Set(shifts.map(s => s.employee_id))]
     const dates       = [...new Set(shifts.map(s => s.date))]
 
@@ -105,7 +104,7 @@ router.post('/bulk', requireRole('owner', 'franchisee', 'admin'), async (req: Re
 })
 
 // PATCH /shifts/:id
-router.patch('/:id', requireRole('owner', 'franchisee', 'admin'), async (req: Request, res: Response) => {
+router.patch('/:id', requirePermission('shifts', 'edit'), async (req: Request, res: Response) => {
   try {
     const { id } = req.params
     const { time_start, time_end, status, date } = req.body
@@ -124,7 +123,7 @@ router.patch('/:id', requireRole('owner', 'franchisee', 'admin'), async (req: Re
 })
 
 // DELETE /shifts/:id
-router.delete('/:id', requireRole('owner', 'franchisee', 'admin'), async (req: Request, res: Response) => {
+router.delete('/:id', requirePermission('shifts', 'delete'), async (req: Request, res: Response) => {
   try {
     const { id } = req.params
     const { error } = await supabase.from('shifts').delete().eq('id', id)
@@ -136,7 +135,7 @@ router.delete('/:id', requireRole('owner', 'franchisee', 'admin'), async (req: R
   }
 })
 
-// POST /shifts/:id/checkin — отметиться на смене (с геолокацией)
+// POST /shifts/:id/checkin
 router.post('/:id/checkin', async (req: Request, res: Response) => {
   try {
     const { id } = req.params
@@ -171,7 +170,7 @@ router.post('/:id/checkin', async (req: Request, res: Response) => {
   }
 })
 
-// POST /shifts/:id/checkout — завершить смену
+// POST /shifts/:id/checkout
 router.post('/:id/checkout', async (req: Request, res: Response) => {
   try {
     const { id } = req.params

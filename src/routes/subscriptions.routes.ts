@@ -1,13 +1,13 @@
 import { Router, Request, Response } from 'express'
 import { supabase } from '../config/supabase'
-import { requireRole } from '../middleware/role.middleware'
+import { requirePermission } from '../middleware/permission.middleware'
 import { resolveBranchId } from '../utils/resolveBranchId'
 import { logAction } from '../utils/logAction'
 
 const router = Router()
 
 // GET /subscriptions
-router.get('/', async (req: Request, res: Response) => {
+router.get('/', requirePermission('subscriptions', 'view'), async (req: Request, res: Response) => {
   try {
     const { branch_id } = req.user!
     const { client_id, status } = req.query
@@ -32,7 +32,7 @@ router.get('/', async (req: Request, res: Response) => {
 })
 
 // GET /subscriptions/:id
-router.get('/:id', async (req: Request, res: Response) => {
+router.get('/:id', requirePermission('subscriptions', 'view'), async (req: Request, res: Response) => {
   try {
     const { id } = req.params
 
@@ -52,7 +52,7 @@ router.get('/:id', async (req: Request, res: Response) => {
 })
 
 // POST /subscriptions
-router.post('/', requireRole('owner', 'franchisee', 'admin'), async (req: Request, res: Response) => {
+router.post('/', requirePermission('subscriptions', 'create'), async (req: Request, res: Response) => {
   try {
     const branchId = await resolveBranchId(req.user!)
     const {
@@ -100,7 +100,7 @@ router.post('/', requireRole('owner', 'franchisee', 'admin'), async (req: Reques
 })
 
 // PATCH /subscriptions/:id
-router.patch('/:id', requireRole('owner', 'franchisee', 'admin'), async (req: Request, res: Response) => {
+router.patch('/:id', requirePermission('subscriptions', 'edit'), async (req: Request, res: Response) => {
   try {
     const { id } = req.params
     const { status, date_end, slot_1_sessions_left, slot_2_sessions_left, cancellation_reason } = req.body
@@ -128,7 +128,7 @@ router.patch('/:id', requireRole('owner', 'franchisee', 'admin'), async (req: Re
 })
 
 // POST /subscriptions/:id/freeze
-router.post('/:id/freeze', requireRole('owner', 'franchisee', 'admin'), async (req: Request, res: Response) => {
+router.post('/:id/freeze', requirePermission('subscriptions', 'edit'), async (req: Request, res: Response) => {
   try {
     const { id } = req.params
     const { frozen_until } = req.body
@@ -161,7 +161,7 @@ router.post('/:id/freeze', requireRole('owner', 'franchisee', 'admin'), async (r
 })
 
 // POST /subscriptions/:id/unfreeze
-router.post('/:id/unfreeze', requireRole('owner', 'franchisee', 'admin'), async (req: Request, res: Response) => {
+router.post('/:id/unfreeze', requirePermission('subscriptions', 'edit'), async (req: Request, res: Response) => {
   try {
     const { id } = req.params
 
@@ -204,7 +204,7 @@ router.post('/:id/unfreeze', requireRole('owner', 'franchisee', 'admin'), async 
 })
 
 // GET /subscriptions/:id/renewals
-router.get('/:id/renewals', async (req: Request, res: Response) => {
+router.get('/:id/renewals', requirePermission('subscriptions', 'view'), async (req: Request, res: Response) => {
   try {
     const { id } = req.params
     const { data, error } = await supabase
@@ -220,8 +220,8 @@ router.get('/:id/renewals', async (req: Request, res: Response) => {
   }
 })
 
-// DELETE /subscriptions/:id — soft delete (developer, owner, franchisee)
-router.delete('/:id', requireRole('owner', 'franchisee'), async (req: Request, res: Response) => {
+// DELETE /subscriptions/:id — soft delete
+router.delete('/:id', requirePermission('subscriptions', 'delete'), async (req: Request, res: Response) => {
   try {
     const { id } = req.params
 
@@ -245,7 +245,6 @@ router.delete('/:id', requireRole('owner', 'franchisee'), async (req: Request, r
 
     if (error) return res.status(500).json({ error: error.message })
 
-    // audit log with client_id as entity_id for client history tab
     const { data: profile } = await supabase.from('profiles').select('full_name').eq('id', req.user!.id).single()
     await logAction({
       branch_id:   sub.branch_id,

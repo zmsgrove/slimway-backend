@@ -1,12 +1,12 @@
 import { Router, Request, Response } from 'express'
 import { supabase } from '../config/supabase'
-import { requireRole } from '../middleware/role.middleware'
+import { requirePermission } from '../middleware/permission.middleware'
 import { resolveBranchId } from '../utils/resolveBranchId'
 
 const router = Router()
 
 // GET /warehouse/export — должен быть ДО /:id
-router.get('/export', async (req: Request, res: Response) => {
+router.get('/export', requirePermission('warehouse', 'view'), async (req: Request, res: Response) => {
   try {
     const branchId = (req.query.branch_id as string) || await resolveBranchId(req.user!)
     const { from, to } = req.query
@@ -26,12 +26,11 @@ router.get('/export', async (req: Request, res: Response) => {
   }
 })
 
-// GET /warehouse — supports ?branch_ids=id1,id2 for multi-branch view
-router.get('/', async (req: Request, res: Response) => {
+// GET /warehouse
+router.get('/', requirePermission('warehouse', 'view'), async (req: Request, res: Response) => {
   try {
     const branchId = await resolveBranchId(req.user!)
 
-    // Multi-branch support
     const branchIdsParam = req.query.branch_ids as string | undefined
     const branchIds = branchIdsParam
       ? branchIdsParam.split(',').map(s => s.trim()).filter(Boolean)
@@ -66,8 +65,8 @@ router.get('/', async (req: Request, res: Response) => {
   }
 })
 
-// POST /warehouse — только developer/owner
-router.post('/', requireRole('owner'), async (req: Request, res: Response) => {
+// POST /warehouse
+router.post('/', requirePermission('warehouse', 'create'), async (req: Request, res: Response) => {
   try {
     const branchId = await resolveBranchId(req.user!)
     if (!branchId) return res.status(400).json({ error: 'No branch', code: 'NO_BRANCH' })
@@ -95,8 +94,8 @@ router.post('/', requireRole('owner'), async (req: Request, res: Response) => {
   }
 })
 
-// POST /warehouse/intake — приход из каталога, auto-create warehouse_item если нет
-router.post('/intake', requireRole('owner', 'franchisee'), async (req: Request, res: Response) => {
+// POST /warehouse/intake
+router.post('/intake', requirePermission('warehouse', 'create'), async (req: Request, res: Response) => {
   try {
     const branchId = await resolveBranchId(req.user!)
     if (!branchId) return res.status(400).json({ error: 'No branch', code: 'NO_BRANCH' })
@@ -111,7 +110,6 @@ router.post('/intake', requireRole('owner', 'franchisee'), async (req: Request, 
       .single()
     if (catErr || !catalogItem) return res.status(404).json({ error: 'Catalog item not found' })
 
-    // Find or create warehouse_item
     const { data: existing } = await supabase
       .from('warehouse_items')
       .select('id, quantity')
@@ -167,7 +165,7 @@ router.post('/intake', requireRole('owner', 'franchisee'), async (req: Request, 
 })
 
 // GET /warehouse/:id
-router.get('/:id', async (req: Request, res: Response) => {
+router.get('/:id', requirePermission('warehouse', 'view'), async (req: Request, res: Response) => {
   try {
     const { data, error } = await supabase
       .from('warehouse_items')
@@ -185,8 +183,8 @@ router.get('/:id', async (req: Request, res: Response) => {
   }
 })
 
-// PATCH /warehouse/:id — только developer/owner
-router.patch('/:id', requireRole('owner'), async (req: Request, res: Response) => {
+// PATCH /warehouse/:id
+router.patch('/:id', requirePermission('warehouse', 'edit'), async (req: Request, res: Response) => {
   try {
     const allowed = ['name', 'sku', 'category', 'unit', 'quantity', 'min_quantity', 'price']
     const patch: Record<string, unknown> = {}
@@ -207,8 +205,8 @@ router.patch('/:id', requireRole('owner'), async (req: Request, res: Response) =
   }
 })
 
-// DELETE /warehouse/:id — soft delete
-router.delete('/:id', requireRole('owner'), async (req: Request, res: Response) => {
+// DELETE /warehouse/:id
+router.delete('/:id', requirePermission('warehouse', 'delete'), async (req: Request, res: Response) => {
   try {
     const { error } = await supabase
       .from('warehouse_items')
@@ -222,8 +220,8 @@ router.delete('/:id', requireRole('owner'), async (req: Request, res: Response) 
   }
 })
 
-// POST /warehouse/:id/movement — developer/owner/franchisee
-router.post('/:id/movement', requireRole('owner', 'franchisee'), async (req: Request, res: Response) => {
+// POST /warehouse/:id/movement
+router.post('/:id/movement', requirePermission('warehouse', 'edit'), async (req: Request, res: Response) => {
   try {
     const branchId = await resolveBranchId(req.user!)
     if (!branchId) return res.status(400).json({ error: 'No branch', code: 'NO_BRANCH' })
@@ -271,7 +269,7 @@ router.post('/:id/movement', requireRole('owner', 'franchisee'), async (req: Req
 })
 
 // GET /warehouse/:id/movements
-router.get('/:id/movements', async (req: Request, res: Response) => {
+router.get('/:id/movements', requirePermission('warehouse', 'view'), async (req: Request, res: Response) => {
   try {
     const { data, error } = await supabase
       .from('warehouse_movements')

@@ -31,6 +31,7 @@ import catalogRouter from './routes/catalog.routes'
 import profileRouter from './routes/profile.routes'
 import suppliersRouter from './routes/suppliers.routes'
 import badgesRouter from './routes/badges.routes'
+import permissionsRouter from './routes/permissions.routes'
 
 dotenv.config()
 
@@ -159,6 +160,7 @@ app.use('/api/v1/branch-subscription-templates', branchSubscriptionTemplatesRout
 app.use('/api/v1/catalog', catalogRouter)
 app.use('/api/v1/suppliers', suppliersRouter)
 app.use('/api/v1/badges', badgesRouter)
+app.use('/api/v1/permissions', permissionsRouter)
 
 // 404
 app.use((_req, res) => {

@@ -1,12 +1,12 @@
 import { Router, Request, Response } from 'express'
 import { supabase } from '../config/supabase'
-import { requireRole } from '../middleware/role.middleware'
+import { requirePermission } from '../middleware/permission.middleware'
 import { resolveBranchId } from '../utils/resolveBranchId'
 
 const router = Router()
 
-// GET /clients — список клиентов филиала
-router.get('/', async (req: Request, res: Response) => {
+// GET /clients
+router.get('/', requirePermission('clients', 'view'), async (req: Request, res: Response) => {
   const { branch_id } = req.user!
   const { search } = req.query
 
@@ -28,8 +28,8 @@ router.get('/', async (req: Request, res: Response) => {
   return res.json(data)
 })
 
-// GET /clients/:id — карточка клиента
-router.get('/:id', async (req: Request, res: Response) => {
+// GET /clients/:id
+router.get('/:id', requirePermission('clients', 'view'), async (req: Request, res: Response) => {
   const { id } = req.params
   const { branch_id } = req.user!
 
@@ -48,8 +48,8 @@ router.get('/:id', async (req: Request, res: Response) => {
   return res.json(data)
 })
 
-// POST /clients — создать клиента
-router.post('/', requireRole('owner', 'franchisee', 'admin'), async (req: Request, res: Response) => {
+// POST /clients
+router.post('/', requirePermission('clients', 'create'), async (req: Request, res: Response) => {
   const branchId = await resolveBranchId(req.user!)
   const { full_name, phone, email, birth_date, notes, source, tags } = req.body
 
@@ -68,21 +68,21 @@ router.post('/', requireRole('owner', 'franchisee', 'admin'), async (req: Reques
   return res.status(201).json(data)
 })
 
-// PATCH /clients/:id — обновить клиента
-router.patch('/:id', requireRole('owner', 'franchisee', 'admin'), async (req: Request, res: Response) => {
+// PATCH /clients/:id
+router.patch('/:id', requirePermission('clients', 'edit'), async (req: Request, res: Response) => {
   const { id } = req.params
   const { full_name, phone, email, birth_date, notes, status, tags, source, avatar_url } = req.body
 
   const patch: Record<string, unknown> = {}
-  if (full_name   !== undefined) patch.full_name   = full_name
-  if (phone       !== undefined) patch.phone       = phone
-  if (email       !== undefined) patch.email       = email
-  if (birth_date  !== undefined) patch.birth_date  = birth_date
-  if (notes       !== undefined) patch.notes       = notes
-  if (status      !== undefined) patch.status      = status
-  if (tags        !== undefined) patch.tags        = tags
-  if (source      !== undefined) patch.source      = source
-  if (avatar_url  !== undefined) patch.avatar_url  = avatar_url
+  if (full_name  !== undefined) patch.full_name  = full_name
+  if (phone      !== undefined) patch.phone      = phone
+  if (email      !== undefined) patch.email      = email
+  if (birth_date !== undefined) patch.birth_date = birth_date
+  if (notes      !== undefined) patch.notes      = notes
+  if (status     !== undefined) patch.status     = status
+  if (tags       !== undefined) patch.tags       = tags
+  if (source     !== undefined) patch.source     = source
+  if (avatar_url !== undefined) patch.avatar_url = avatar_url
 
   const { data, error } = await supabase
     .from('clients')
@@ -99,7 +99,7 @@ router.patch('/:id', requireRole('owner', 'franchisee', 'admin'), async (req: Re
 })
 
 // DELETE /clients/:id — soft delete
-router.delete('/:id', requireRole('owner', 'franchisee', 'admin'), async (req: Request, res: Response) => {
+router.delete('/:id', requirePermission('clients', 'delete'), async (req: Request, res: Response) => {
   const { id } = req.params
 
   const { error } = await supabase

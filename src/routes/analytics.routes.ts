@@ -1,11 +1,12 @@
 import { Router, Request, Response } from 'express'
 import { supabase } from '../config/supabase'
+import { requirePermission } from '../middleware/permission.middleware'
 import { resolveBranchId } from '../utils/resolveBranchId'
 
 const router = Router()
 
 // GET /analytics/overview?branch_ids=id1,id2  (or ?branch_id=id)
-router.get('/overview', async (req: Request, res: Response) => {
+router.get('/overview', requirePermission('analytics', 'view'), async (req: Request, res: Response) => {
   try {
     // Parse branch IDs: ?branch_ids=a,b,c takes priority over single ?branch_id
     let branchIds: string[] = []

@@ -43,7 +43,7 @@ router.post('/', requireRole('owner', 'franchisee', 'admin'), async (req: Reques
 })
 
 // PATCH /bookings/:id/attend — отметить посещение + списать занятие
-router.patch('/:id/attend', requireRole('owner', 'franchisee', 'admin', 'trainer'), async (req: Request, res: Response) => {
+router.patch('/:id/attend', requireRole('owner', 'franchisee', 'admin', 'staff'), async (req: Request, res: Response) => {
   const { id } = req.params
 
   // Получаем booking с membership
