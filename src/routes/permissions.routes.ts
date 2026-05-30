@@ -63,7 +63,9 @@ router.post('/', requirePermission('permissions', 'edit'), async (req: Request, 
       }
     }
 
-    const { data, error } = await supabase
+    const resolvedBranchId: string | null = branch_id ?? null
+
+    const { error } = await supabase
       .from('permission_overrides')
       .upsert(
         {
@@ -72,16 +74,33 @@ router.post('/', requirePermission('permissions', 'edit'), async (req: Request, 
           action,
           state,
           set_by:     actorRole,
-          branch_id:  branch_id ?? null,
+          branch_id:  resolvedBranchId,
           updated_at: new Date().toISOString(),
         },
         { onConflict: 'role,resource,action,branch_id' }
       )
-      .select()
-      .single()
 
-    if (error) return res.status(500).json({ error: error.message })
-    return res.status(201).json(data)
+    if (error) {
+      console.error('[permissions POST] upsert error:', error)
+      return res.status(500).json({ error: error.message })
+    }
+
+    // upsert with onConflict doesn't reliably return data — fetch separately
+    let selectQuery = supabase
+      .from('permission_overrides')
+      .select('*')
+      .eq('role', targetRole)
+      .eq('resource', resource)
+      .eq('action', action)
+
+    if (resolvedBranchId === null) {
+      selectQuery = selectQuery.is('branch_id', null)
+    } else {
+      selectQuery = selectQuery.eq('branch_id', resolvedBranchId)
+    }
+
+    const { data: result } = await selectQuery.single()
+    return res.status(201).json(result ?? {})
   } catch (e: unknown) {
     const msg = e instanceof Error ? e.message : 'Internal server error'
     return res.status(500).json({ error: msg })

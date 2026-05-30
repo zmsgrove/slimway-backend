@@ -32,7 +32,21 @@ router.get('/', requirePermission('leads', 'view'), async (req: Request, res: Re
       console.error('[leads GET /]', error)
       return res.status(500).json({ error: error.message, code: error.code })
     }
-    return res.json(data)
+
+    // Enrich with assignee profile names (assigned_to stores profile_id)
+    const profileIds = [...new Set(data.filter(l => l.assigned_to).map(l => l.assigned_to as string))]
+    let profileMap: Record<string, string> = {}
+    if (profileIds.length > 0) {
+      const { data: profiles } = await supabase.from('profiles').select('id, full_name').in('id', profileIds)
+      if (profiles) {
+        for (const p of profiles) profileMap[p.id] = p.full_name
+      }
+    }
+    const enriched = data.map(l => ({
+      ...l,
+      assigned_profile: l.assigned_to ? { full_name: profileMap[l.assigned_to] ?? null } : null,
+    }))
+    return res.json(enriched)
   } catch (e: unknown) {
     const msg = e instanceof Error ? e.message : 'Internal server error'
     return res.status(500).json({ error: msg })
@@ -103,7 +117,15 @@ router.get('/:id', requirePermission('leads', 'view'), async (req: Request, res:
     .single()
 
   if (error) return res.status(404).json({ error: 'Lead not found' })
-  return res.json(data)
+
+  // Enrich with assignee profile name (assigned_to stores profile_id)
+  let assignedProfile: { full_name: string } | null = null
+  if (data.assigned_to) {
+    const { data: prof } = await supabase.from('profiles').select('full_name').eq('id', data.assigned_to).single()
+    if (prof) assignedProfile = { full_name: prof.full_name }
+  }
+
+  return res.json({ ...data, assigned_profile: assignedProfile })
 })
 
 // PATCH /leads/:id
@@ -166,28 +188,35 @@ router.patch('/:id/status', requirePermission('leads', 'edit'), async (req: Requ
     let clientRecord: { id: string; full_name: string; phone: string | null } | null = null
 
     if (status === 'success' && !lead.client_id) {
+      console.log('[leads PATCH status] status=success, attempting client auto-create for lead:', id, 'full_name:', lead.full_name, 'branch_id:', lead.branch_id)
       try {
+        const insertPayload = {
+          branch_id: lead.branch_id,
+          full_name: lead.full_name,
+          phone:     lead.phone ?? null,
+          status:    'draft',
+        }
+        console.log('[leads PATCH status] clients INSERT payload:', insertPayload)
+
         const { data: newClient, error: clientErr } = await supabase
           .from('clients')
-          .insert({
-            branch_id: lead.branch_id,
-            full_name: lead.full_name,
-            phone:     lead.phone ?? null,
-            status:    'draft',
-          })
+          .insert(insertPayload)
           .select('id, full_name, phone')
           .single()
 
         if (!clientErr && newClient) {
+          console.log('[leads PATCH status] client created OK:', newClient.id, newClient.full_name)
           newClientId = newClient.id
           clientRecord = { id: newClient.id, full_name: newClient.full_name, phone: newClient.phone }
           updates.client_id = newClientId
         } else if (clientErr) {
-          console.error('[leads] client auto-create failed:', clientErr)
+          console.error('[leads PATCH status] client auto-create failed:', JSON.stringify(clientErr))
         }
       } catch (clientEx) {
-        console.error('[leads] client auto-create exception:', clientEx)
+        console.error('[leads PATCH status] client auto-create exception:', clientEx)
       }
+    } else if (status === 'success' && lead.client_id) {
+      console.log('[leads PATCH status] status=success, client already exists:', lead.client_id)
     }
 
     const { data, error } = await supabase
