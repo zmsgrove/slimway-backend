@@ -32,6 +32,7 @@ import profileRouter from './routes/profile.routes'
 import suppliersRouter from './routes/suppliers.routes'
 import badgesRouter from './routes/badges.routes'
 import permissionsRouter from './routes/permissions.routes'
+import mfaRouter from './routes/mfa.routes'
 
 dotenv.config()
 
@@ -133,6 +134,9 @@ app.post('/api/wazzup-proxy', async (req, res) => {
 
 // Profile routes — без resolveBranch (профиль не привязан к конкретному филиалу)
 app.use('/api/v1/profile', requireAuth, profileRouter)
+
+// MFA routes — без resolveBranch, без MFA-проверки (exempt в middleware)
+app.use('/api/v1/auth', requireAuth, mfaRouter)
 
 // Все API-роуты защищены авторизацией и резолвером филиала
 app.use('/api/v1', requireAuth, resolveBranch)
