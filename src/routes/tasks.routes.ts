@@ -21,7 +21,7 @@ router.get('/', async (req: Request, res: Response) => {
 
     let query = supabase
       .from('tasks')
-      .select('*, task_checklist_items(*), task_checklist_groups(*), task_comments(*)')
+      .select('*')
       .order('created_at', { ascending: false })
 
     if (branchId) query = query.eq('branch_id', branchId)
@@ -41,14 +41,35 @@ router.get('/', async (req: Request, res: Response) => {
       query = query.or(parts.join(','))
     }
 
-    const { data, error } = await query
+    const { data: tasks, error } = await query
     if (error) {
       console.error('[tasks GET /]', error)
       return res.status(500).json({ error: error.message, code: error.code })
     }
-    const result = (data || []).map((t: Record<string, unknown>) => ({
+
+    const taskIds = (tasks ?? []).map((t: Record<string, unknown>) => t.id as string)
+
+    let groups:   Array<Record<string, unknown>> = []
+    let items:    Array<Record<string, unknown>> = []
+    let comments: Array<Record<string, unknown>> = []
+
+    if (taskIds.length > 0) {
+      const [gRes, iRes, cRes] = await Promise.all([
+        supabase.from('task_checklist_groups').select('*').in('task_id', taskIds),
+        supabase.from('task_checklist_items').select('*').in('task_id', taskIds),
+        supabase.from('task_comments').select('*').in('task_id', taskIds),
+      ])
+      groups   = (gRes.data ?? []) as Array<Record<string, unknown>>
+      items    = (iRes.data ?? []) as Array<Record<string, unknown>>
+      comments = (cRes.data ?? []) as Array<Record<string, unknown>>
+    }
+
+    const result = (tasks ?? []).map((t: Record<string, unknown>) => ({
       ...t,
-      observer_ids: parseObserverIds(t.observer_ids),
+      observer_ids:     parseObserverIds(t.observer_ids),
+      checklist_groups: groups.filter(g   => g.task_id === t.id),
+      checklist_items:  items.filter(i    => i.task_id === t.id),
+      comments:         comments.filter(c => c.task_id === t.id),
     }))
     return res.json(result)
   } catch (e: unknown) {
@@ -94,13 +115,26 @@ router.post('/', async (req: Request, res: Response) => {
 // GET /tasks/:id
 router.get('/:id', async (req: Request, res: Response) => {
   try {
-    const { data, error } = await supabase
+    const { data: task, error } = await supabase
       .from('tasks')
-      .select('*, task_checklist_items(*), task_checklist_groups(*), task_comments(*)')
+      .select('*')
       .eq('id', req.params.id)
       .single()
-    if (error || !data) return res.status(404).json({ error: 'Not found', code: 'NOT_FOUND' })
-    return res.json({ ...data, observer_ids: parseObserverIds(data.observer_ids) })
+    if (error || !task) return res.status(404).json({ error: 'Not found', code: 'NOT_FOUND' })
+
+    const [gRes, iRes, cRes] = await Promise.all([
+      supabase.from('task_checklist_groups').select('*').eq('task_id', req.params.id),
+      supabase.from('task_checklist_items').select('*').eq('task_id', req.params.id),
+      supabase.from('task_comments').select('*').eq('task_id', req.params.id),
+    ])
+
+    return res.json({
+      ...task,
+      observer_ids:     parseObserverIds(task.observer_ids),
+      checklist_groups: gRes.data ?? [],
+      checklist_items:  iRes.data ?? [],
+      comments:         cRes.data ?? [],
+    })
   } catch (e: unknown) {
     const msg = e instanceof Error ? e.message : 'Internal server error'
     return res.status(500).json({ error: msg })

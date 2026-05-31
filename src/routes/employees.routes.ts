@@ -25,14 +25,34 @@ function composeName(first: string, last: string, middle?: string): string {
 router.get('/', requirePermission('employees', 'view'), async (req: Request, res: Response) => {
   try {
     const branchId = await resolveBranchId(req.user!)
-    let query = supabase.from('employees').select('*, profiles!profile_id(role)').order('full_name')
+    let query = supabase.from('employees').select('*').order('full_name')
     if (branchId) query = query.eq('branch_id', branchId)
-    const { data, error } = await query
+    const { data: employees, error } = await query
     if (error) {
       console.error('[GET /employees] Supabase error:', error)
       return res.status(500).json({ error: error.message })
     }
-    return res.json(data)
+
+    const profileIds = (employees ?? [])
+      .map((e: Record<string, unknown>) => e.profile_id as string)
+      .filter(Boolean)
+
+    let profiles: Array<Record<string, unknown>> = []
+    if (profileIds.length > 0) {
+      const { data: pData, error: pError } = await supabase
+        .from('profiles')
+        .select('id, full_name, phone, role, theme_preference')
+        .in('id', profileIds)
+      if (pError) console.error('[GET /employees] profiles fetch error:', pError)
+      profiles = (pData ?? []) as Array<Record<string, unknown>>
+    }
+
+    const result = (employees ?? []).map((emp: Record<string, unknown>) => ({
+      ...emp,
+      profile: profiles.find((p) => p.id === emp.profile_id) ?? null,
+    }))
+
+    return res.json(result)
   } catch (e: unknown) {
     console.error('[GET /employees] Unexpected error:', e)
     const msg = e instanceof Error ? e.message : 'Internal server error'
