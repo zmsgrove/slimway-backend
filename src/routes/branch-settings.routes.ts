@@ -5,7 +5,13 @@ import { requirePermission } from '../middleware/permission.middleware'
 
 const router = Router()
 
-// GET /branch-settings — get settings for current branch (upsert on missing)
+const ALLOWED = [
+  'work_time_start', 'work_time_end', 'timezone', 'currency',
+  'contact_phone', 'contact_email', 'website', 'address',
+  'booking_interval_min', 'max_bookings_per_day',
+]
+
+// GET /branch-settings — get settings for current branch (auto-create if missing)
 router.get('/', async (req: Request, res: Response) => {
   const branchId = await resolveBranchId(req.user!)
   if (!branchId) return res.status(400).json({ error: 'Branch not resolved' })
@@ -16,46 +22,53 @@ router.get('/', async (req: Request, res: Response) => {
     .eq('branch_id', branchId)
     .maybeSingle()
 
-  if (error) return res.status(500).json({ error: error.message })
+  if (error) {
+    console.error('[branch-settings GET]', error)
+    return res.status(500).json({ error: error.message })
+  }
 
   if (!data) {
-    // auto-create default row
     const { data: created, error: err2 } = await supabase
       .from('branch_settings')
       .insert({ branch_id: branchId })
       .select()
       .single()
-    if (err2) return res.status(500).json({ error: err2.message })
+    if (err2) {
+      console.error('[branch-settings GET insert]', err2)
+      return res.status(500).json({ error: err2.message })
+    }
     return res.json(created)
   }
 
   return res.json(data)
 })
 
-// PATCH /branch-settings — update settings for current branch
+// PATCH /branch-settings — upsert settings for current branch
 router.patch('/', requirePermission('branches', 'edit'), async (req: Request, res: Response) => {
   const branchId = await resolveBranchId(req.user!)
   if (!branchId) return res.status(400).json({ error: 'Branch not resolved' })
 
-  const ALLOWED = [
-    'working_hours_start', 'working_hours_end', 'timezone', 'currency',
-    'contact_phone', 'contact_email', 'website', 'address',
-    'booking_interval_min', 'max_bookings_per_day',
-  ]
-
-  const updates: Record<string, unknown> = { updated_at: new Date().toISOString() }
+  const body: Record<string, unknown> = {}
   for (const key of ALLOWED) {
-    if (key in req.body) updates[key] = req.body[key] ?? null
+    if (key in req.body) body[key] = req.body[key] ?? null
   }
 
-  const { data, error } = await supabase
+  const { error } = await supabase
     .from('branch_settings')
-    .upsert({ ...updates, branch_id: branchId }, { onConflict: 'branch_id' })
-    .select()
-    .single()
+    .upsert({
+      branch_id: branchId,
+      ...body,
+      updated_at: new Date().toISOString(),
+    }, {
+      onConflict: 'branch_id',
+    })
 
-  if (error) return res.status(500).json({ error: error.message })
-  return res.json(data)
+  if (error) {
+    console.error('[branch-settings PATCH]', error)
+    return res.status(500).json({ error: error.message })
+  }
+
+  return res.json({ ok: true })
 })
 
 export default router
