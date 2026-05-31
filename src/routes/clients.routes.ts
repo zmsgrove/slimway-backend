@@ -28,24 +28,78 @@ router.get('/', requirePermission('clients', 'view'), async (req: Request, res: 
   return res.json(data)
 })
 
-// GET /clients/:id
+// GET /clients/:id — full detail with history
 router.get('/:id', requirePermission('clients', 'view'), async (req: Request, res: Response) => {
-  const { id } = req.params
-  const { branch_id } = req.user!
+  try {
+    const { id } = req.params
+    const { branch_id } = req.user!
 
-  let query = supabase
-    .from('clients')
-    .select('*, memberships(*), bookings(*, schedule(*))')
-    .eq('id', id)
-    .eq('is_deleted', false)
-    .single()
+    const { data: client, error } = await supabase
+      .from('clients')
+      .select('*')
+      .eq('id', id)
+      .eq('is_deleted', false)
+      .single()
 
-  if (branch_id) query = (query as any).eq('branch_id', branch_id)
+    if (error || !client) return res.status(404).json({ error: 'Client not found', code: 'NOT_FOUND' })
+    if (branch_id && client.branch_id !== branch_id) {
+      return res.status(403).json({ error: 'Access denied', code: 'FORBIDDEN' })
+    }
 
-  const { data, error } = await query
+    const [membershipsRes, bookingsRes, subsRes, leadsRes] = await Promise.all([
+      supabase.from('memberships').select('id, status, end_date, used_sessions, total_sessions').eq('client_id', id),
+      supabase.from('bookings_v2').select('*').eq('client_id', id).order('date', { ascending: false }).limit(100),
+      supabase.from('subscriptions').select('*').eq('client_id', id).is('deleted_at', null).order('created_at', { ascending: false }),
+      supabase.from('leads').select('id').eq('client_id', id),
+    ])
 
-  if (error) return res.status(404).json({ error: 'Client not found', code: 'NOT_FOUND' })
-  return res.json(data)
+    // Enrich bookings with slot + device info
+    const bookings = (bookingsRes.data ?? []) as Record<string, unknown>[]
+    const slotIds = bookings.map(b => b.slot_1_schedule_slot_id as string).filter(Boolean)
+    let slotsMap: Record<string, Record<string, unknown>> = {}
+    if (slotIds.length > 0) {
+      const { data: slotsData } = await supabase
+        .from('schedule_slots')
+        .select('id, date, time_start, time_end, device_id')
+        .in('id', slotIds)
+      const slots = (slotsData ?? []) as Record<string, unknown>[]
+      const deviceIds = slots.map(s => s.device_id as string).filter(Boolean)
+      let devicesMap: Record<string, Record<string, unknown>> = {}
+      if (deviceIds.length > 0) {
+        const { data: devicesData } = await supabase
+          .from('devices').select('id, type, number').in('id', deviceIds)
+        devicesMap = Object.fromEntries(((devicesData ?? []) as Record<string, unknown>[]).map(d => [d.id as string, d]))
+      }
+      slotsMap = Object.fromEntries(slots.map(s => [s.id as string, { ...s, device: devicesMap[s.device_id as string] ?? null }]))
+    }
+    const bookingsWithSlots = bookings.map(b => ({
+      ...b,
+      slot: slotsMap[b.slot_1_schedule_slot_id as string] ?? null,
+    }))
+
+    // Lead comments
+    const leadIds = ((leadsRes.data ?? []) as Record<string, unknown>[]).map(l => l.id as string)
+    let leadComments: Record<string, unknown>[] = []
+    if (leadIds.length > 0) {
+      const { data: commentsData } = await supabase
+        .from('lead_comments')
+        .select('id, lead_id, author_id, text, created_at, profiles(full_name)')
+        .in('lead_id', leadIds)
+        .order('created_at', { ascending: false })
+      leadComments = (commentsData ?? []) as Record<string, unknown>[]
+    }
+
+    return res.json({
+      ...client,
+      memberships:  membershipsRes.data ?? [],
+      bookings:     bookingsWithSlots,
+      subscriptions: subsRes.data ?? [],
+      lead_comments: leadComments,
+    })
+  } catch (e: unknown) {
+    const msg = e instanceof Error ? e.message : 'Internal server error'
+    return res.status(500).json({ error: msg })
+  }
 })
 
 // POST /clients
@@ -112,6 +166,46 @@ router.delete('/:id', requirePermission('clients', 'delete'), async (req: Reques
     return res.status(500).json({ error: error.message, details: error })
   }
   return res.status(204).send()
+})
+
+// POST /clients/:id/freeze
+router.post('/:id/freeze', requirePermission('clients', 'edit'), async (req: Request, res: Response) => {
+  try {
+    const { id } = req.params
+    const { freeze_until } = req.body as { freeze_until?: string }
+    if (!freeze_until) return res.status(400).json({ error: 'freeze_until required', code: 'VALIDATION_ERROR' })
+
+    const { data, error } = await supabase
+      .from('clients')
+      .update({ status: 'frozen', freeze_until })
+      .eq('id', id)
+      .select()
+      .single()
+
+    if (error) return res.status(500).json({ error: error.message })
+    return res.json(data)
+  } catch (e: unknown) {
+    return res.status(500).json({ error: e instanceof Error ? e.message : 'Internal server error' })
+  }
+})
+
+// POST /clients/:id/unfreeze
+router.post('/:id/unfreeze', requirePermission('clients', 'edit'), async (req: Request, res: Response) => {
+  try {
+    const { id } = req.params
+
+    const { data, error } = await supabase
+      .from('clients')
+      .update({ status: null, freeze_until: null })
+      .eq('id', id)
+      .select()
+      .single()
+
+    if (error) return res.status(500).json({ error: error.message })
+    return res.json(data)
+  } catch (e: unknown) {
+    return res.status(500).json({ error: e instanceof Error ? e.message : 'Internal server error' })
+  }
 })
 
 export default router

@@ -125,6 +125,89 @@ router.get('/overview', requirePermission('analytics', 'view'), async (req: Requ
       }))
     }
 
+    // Extended charts data
+    // clients_by_month — last 6 months (new clients per month)
+    const now = new Date()
+    const months6ago = new Date(now.getFullYear(), now.getMonth() - 5, 1).toISOString()
+    const clientsByMonthData: { clients_by_month: { month: string; count: number }[] } = { clients_by_month: [] }
+    if (branchIds.length > 0) {
+      let q = supabase.from('clients').select('created_at').eq('is_deleted', false).gte('created_at', months6ago)
+      q = applyBranch(q) as typeof q
+      const { data: clientRows } = await q
+      const monthCounts: Record<string, number> = {}
+      for (const c of clientRows ?? []) {
+        const m = (c as { created_at: string }).created_at.slice(0, 7)
+        monthCounts[m] = (monthCounts[m] ?? 0) + 1
+      }
+      clientsByMonthData.clients_by_month = Object.entries(monthCounts)
+        .sort(([a], [b]) => a.localeCompare(b))
+        .map(([month, count]) => ({ month, count }))
+    }
+
+    // revenue_by_month — last 6 months (subscription price sum per month)
+    const revenueByMonthData: { revenue_by_month: { month: string; revenue: number }[] } = { revenue_by_month: [] }
+    if (branchIds.length > 0) {
+      let q = supabase.from('subscriptions').select('created_at, price').gte('created_at', months6ago).not('price', 'is', null)
+      q = applyBranch(q) as typeof q
+      const { data: subRows } = await q
+      const revMap: Record<string, number> = {}
+      for (const s of subRows ?? []) {
+        const row = s as { created_at: string; price: number | null }
+        const m = row.created_at.slice(0, 7)
+        revMap[m] = (revMap[m] ?? 0) + (row.price ?? 0)
+      }
+      revenueByMonthData.revenue_by_month = Object.entries(revMap)
+        .sort(([a], [b]) => a.localeCompare(b))
+        .map(([month, revenue]) => ({ month, revenue }))
+    }
+
+    // leads_by_source
+    const leadsBySourceData: { leads_by_source: { source: string; count: number }[] } = { leads_by_source: [] }
+    if (branchIds.length > 0) {
+      let q = supabase.from('leads').select('source')
+      q = applyBranch(q) as typeof q
+      const { data: leadRows } = await q
+      const srcMap: Record<string, number> = {}
+      for (const l of leadRows ?? []) {
+        const src = (l as { source: string }).source ?? 'other'
+        srcMap[src] = (srcMap[src] ?? 0) + 1
+      }
+      leadsBySourceData.leads_by_source = Object.entries(srcMap).map(([source, count]) => ({ source, count }))
+    }
+
+    // leads_conversion (success / total)
+    let leadsConversion = 0
+    if (branchIds.length > 0) {
+      const [total, success] = await Promise.all([
+        cnt('leads', {}),
+        cnt('leads', { status: 'success' }),
+      ])
+      leadsConversion = total > 0 ? Math.round((success / total) * 100) : 0
+    }
+
+    // avg_ltv — average sum of subscription prices per client
+    let avgLtv = 0
+    if (branchIds.length > 0) {
+      let q = supabase.from('subscriptions').select('client_id, price').not('price', 'is', null)
+      q = applyBranch(q) as typeof q
+      const { data: ltv_rows } = await q
+      const clientRevenue: Record<string, number> = {}
+      for (const row of ltv_rows ?? []) {
+        const r = row as { client_id: string; price: number }
+        clientRevenue[r.client_id] = (clientRevenue[r.client_id] ?? 0) + (r.price ?? 0)
+      }
+      const vals = Object.values(clientRevenue)
+      avgLtv = vals.length > 0 ? Math.round(vals.reduce((a, b) => a + b, 0) / vals.length) : 0
+    }
+
+    // leads_funnel — counts per status
+    const leadsFunnelData: { leads_funnel: { status: string; count: number }[] } = { leads_funnel: [] }
+    if (branchIds.length > 0) {
+      const funnelStatuses = ['new', 'in_work', 'waiting', 'success', 'fail']
+      const funnelCounts = await Promise.all(funnelStatuses.map(s => cnt('leads', { status: s })))
+      leadsFunnelData.leads_funnel = funnelStatuses.map((s, i) => ({ status: s, count: funnelCounts[i] }))
+    }
+
     return res.json({
       clients_total:               clientsTotal,
       subscriptions_active:        subsActive,
@@ -136,10 +219,56 @@ router.get('/overview', requirePermission('analytics', 'view'), async (req: Requ
       active_shifts:               activeShifts,
       low_stock_items:             lowStockItems,
       by_branch:                   byBranch,
+      ...clientsByMonthData,
+      ...revenueByMonthData,
+      ...leadsBySourceData,
+      leads_conversion:            leadsConversion,
+      avg_ltv:                     avgLtv,
+      ...leadsFunnelData,
     })
   } catch (e: unknown) {
     const msg = e instanceof Error ? e.message : 'Internal server error'
     return res.status(500).json({ error: msg })
+  }
+})
+
+// GET /analytics/heatmap — booking frequency by hour × device type for last 30 days
+router.get('/heatmap', requirePermission('analytics', 'view'), async (req: Request, res: Response) => {
+  try {
+    const branchId = await resolveBranchId(req.user!)
+    const days = parseInt(req.query.days as string) || 30
+    const fromDate = new Date()
+    fromDate.setDate(fromDate.getDate() - days)
+    const fromStr = fromDate.toISOString().slice(0, 10)
+
+    let q = supabase
+      .from('schedule_slots')
+      .select('time_start, devices(type), bookings_v2(attended)')
+      .not('booking_id', 'is', null)
+      .gte('date', fromStr)
+
+    if (branchId) q = q.eq('branch_id', branchId) as typeof q
+
+    const { data: slots, error } = await q
+    if (error) return res.status(500).json({ error: error.message })
+
+    // Aggregate: { device_type: { hour: count } }
+    const matrix: Record<string, Record<string, number>> = {}
+    for (const slot of (slots ?? []) as Record<string, unknown>[]) {
+      const devType = (slot.devices as { type: string } | null)?.type ?? 'unknown'
+      const hour = (slot.time_start as string).slice(0, 2)
+      if (!matrix[devType]) matrix[devType] = {}
+      matrix[devType][hour] = (matrix[devType][hour] ?? 0) + 1
+    }
+
+    const result = Object.entries(matrix).map(([device_type, hours]) => ({
+      device_type,
+      hours: Object.entries(hours).map(([hour, count]) => ({ hour, count })).sort((a, b) => a.hour.localeCompare(b.hour)),
+    }))
+
+    return res.json(result)
+  } catch (e: unknown) {
+    return res.status(500).json({ error: e instanceof Error ? e.message : 'Internal server error' })
   }
 })
 

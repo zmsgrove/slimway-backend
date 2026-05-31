@@ -50,7 +50,7 @@ router.get('/', async (req: Request, res: Response) => {
 router.post('/bulk', requireRole('owner', 'franchisee', 'admin'), async (req: Request, res: Response) => {
   const branchId = await resolveBranchId(req.user!)
   const { slots } = req.body as {
-    slots?: Array<{ device_id: string; date: string; time_start: string; time_end: string; branch_id?: string }>
+    slots?: Array<{ device_id: string; date: string; time_start: string; time_end: string; branch_id?: string; status?: string }>
   }
 
   if (!Array.isArray(slots) || slots.length === 0) {
@@ -63,7 +63,7 @@ router.post('/bulk', requireRole('owner', 'franchisee', 'admin'), async (req: Re
     date:       s.date,
     time_start: s.time_start,
     time_end:   s.time_end,
-    status:     'free',
+    status:     s.status === 'blocked' ? 'blocked' : 'free',
   }))
 
   // Upsert: on conflict (device_id, date, time_start) — skip
@@ -136,6 +136,56 @@ router.delete('/:id', requireRole('owner', 'franchisee', 'admin'), async (req: R
   const { error } = await supabase.from('schedule_slots').delete().eq('id', id)
   if (error) return res.status(500).json({ error: error.message })
   return res.status(204).send()
+})
+
+// GET /schedule-slots/waitlist?date=
+router.get('/waitlist', async (req: Request, res: Response) => {
+  try {
+    const branchId = await resolveBranchId(req.user!)
+    const { date, device_type } = req.query
+    let query = supabase
+      .from('slot_waitlist')
+      .select('*, clients(id, full_name, phone)')
+      .order('created_at', { ascending: true })
+    if (branchId) query = query.eq('branch_id', branchId)
+    if (date) query = query.eq('date', date as string)
+    if (device_type) query = query.eq('device_type', device_type as string)
+    const { data, error } = await query
+    if (error) return res.status(500).json({ error: error.message })
+    return res.json(data ?? [])
+  } catch (e: unknown) {
+    return res.status(500).json({ error: e instanceof Error ? e.message : 'Internal server error' })
+  }
+})
+
+// POST /schedule-slots/waitlist
+router.post('/waitlist', async (req: Request, res: Response) => {
+  try {
+    const branchId = await resolveBranchId(req.user!)
+    if (!branchId) return res.status(400).json({ error: 'No branch' })
+    const { client_id, device_type, date, time_start, notes } = req.body as Record<string, string>
+    if (!client_id || !device_type || !date) return res.status(400).json({ error: 'client_id, device_type, date required' })
+    const { data, error } = await supabase
+      .from('slot_waitlist')
+      .insert({ branch_id: branchId, client_id, device_type, date, time_start: time_start ?? null, notes: notes ?? null })
+      .select('*, clients(id, full_name, phone)')
+      .single()
+    if (error) return res.status(500).json({ error: error.message })
+    return res.status(201).json(data)
+  } catch (e: unknown) {
+    return res.status(500).json({ error: e instanceof Error ? e.message : 'Internal server error' })
+  }
+})
+
+// DELETE /schedule-slots/waitlist/:id
+router.delete('/waitlist/:id', async (req: Request, res: Response) => {
+  try {
+    const { error } = await supabase.from('slot_waitlist').delete().eq('id', req.params.id)
+    if (error) return res.status(500).json({ error: error.message })
+    return res.status(204).send()
+  } catch (e: unknown) {
+    return res.status(500).json({ error: e instanceof Error ? e.message : 'Internal server error' })
+  }
 })
 
 export default router

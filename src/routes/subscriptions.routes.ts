@@ -220,6 +220,51 @@ router.get('/:id/renewals', requirePermission('subscriptions', 'view'), async (r
   }
 })
 
+// POST /subscriptions/:id/transfer
+router.post('/:id/transfer', requirePermission('subscriptions', 'edit'), async (req: Request, res: Response) => {
+  try {
+    const { id } = req.params
+    const { new_client_id } = req.body as { new_client_id?: string }
+    if (!new_client_id) return res.status(400).json({ error: 'new_client_id required', code: 'VALIDATION_ERROR' })
+
+    const { data: sub, error: subErr } = await supabase
+      .from('subscriptions')
+      .select('id, client_id, status, branch_id')
+      .eq('id', id)
+      .is('deleted_at', null)
+      .single()
+
+    if (subErr || !sub) return res.status(404).json({ error: 'Subscription not found', code: 'NOT_FOUND' })
+    if (sub.status !== 'active') return res.status(400).json({ error: 'Only active subscriptions can be transferred', code: 'INVALID_STATE' })
+    if (sub.client_id === new_client_id) return res.status(400).json({ error: 'Cannot transfer to the same client', code: 'SAME_CLIENT' })
+
+    const { data: newClient, error: clientErr } = await supabase
+      .from('clients')
+      .select('id')
+      .eq('id', new_client_id)
+      .eq('is_deleted', false)
+      .single()
+
+    if (clientErr || !newClient) return res.status(404).json({ error: 'New client not found', code: 'CLIENT_NOT_FOUND' })
+
+    const [{ error: transferErr }, { data: updated, error: updateErr }] = await Promise.all([
+      supabase.from('subscription_transfers').insert({
+        subscription_id: id,
+        from_client_id:  sub.client_id,
+        to_client_id:    new_client_id,
+        transferred_by:  req.user!.id,
+      }),
+      supabase.from('subscriptions').update({ client_id: new_client_id }).eq('id', id).select().single(),
+    ])
+
+    if (transferErr) console.error('[transfer] log error:', transferErr)
+    if (updateErr) return res.status(500).json({ error: updateErr.message })
+    return res.json(updated)
+  } catch (e: unknown) {
+    return res.status(500).json({ error: e instanceof Error ? e.message : 'Internal server error' })
+  }
+})
+
 // DELETE /subscriptions/:id — soft delete
 router.delete('/:id', requirePermission('subscriptions', 'delete'), async (req: Request, res: Response) => {
   try {

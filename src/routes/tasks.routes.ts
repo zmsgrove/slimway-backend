@@ -83,7 +83,7 @@ router.post('/', async (req: Request, res: Response) => {
   try {
     const branchId = await resolveBranchId(req.user!)
     if (!branchId) return res.status(400).json({ error: 'No branch', code: 'NO_BRANCH' })
-    const { title, description, priority, status, assigned_to, observer_ids, deadline } = req.body
+    const { title, description, priority, status, assigned_to, observer_ids, deadline, related_type, related_id, recur_rule } = req.body
     if (!title?.trim()) return res.status(400).json({ error: 'title required', code: 'VALIDATION_ERROR' })
     const { data, error } = await supabase
       .from('tasks')
@@ -97,6 +97,9 @@ router.post('/', async (req: Request, res: Response) => {
         observer_ids: Array.isArray(observer_ids) ? observer_ids : [],
         deadline:     deadline || null,
         created_by:   req.user!.id,
+        related_type: related_type || null,
+        related_id:   related_id || null,
+        recur_rule:   recur_rule || null,
       })
       .select()
       .single()
@@ -152,7 +155,7 @@ router.patch('/:id', async (req: Request, res: Response) => {
         return res.status(403).json({ error: 'Forbidden', code: 'FORBIDDEN' })
       }
     }
-    const allowed = ['title', 'description', 'priority', 'status', 'assigned_to', 'deadline', 'observer_ids']
+    const allowed = ['title', 'description', 'priority', 'status', 'assigned_to', 'deadline', 'observer_ids', 'related_type', 'related_id', 'recur_rule']
     const patch: Record<string, unknown> = {}
     for (const key of allowed) {
       if (key in req.body) patch[key] = req.body[key]

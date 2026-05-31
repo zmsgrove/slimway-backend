@@ -148,21 +148,69 @@ router.post('/', requirePermission('employees', 'create'), async (req: Request, 
   }
 })
 
+// GET /employees/:id — with KPI
+router.get('/:id', requirePermission('employees', 'view'), async (req: Request, res: Response) => {
+  try {
+    const { id } = req.params
+    const { data: emp, error } = await supabase.from('employees').select('*').eq('id', id).single()
+    if (error || !emp) return res.status(404).json({ error: 'Not found' })
+
+    const [shiftsRes, tasksRes] = await Promise.all([
+      supabase.from('shifts').select('id, status, date, time_start, time_end').eq('employee_id', id),
+      supabase.from('tasks').select('id, status').eq('assigned_to', id),
+    ])
+
+    const shifts     = shiftsRes.data ?? []
+    const tasks      = tasksRes.data ?? []
+    const completed  = shifts.filter((s: { status: string }) => s.status === 'completed')
+    const tasksDone  = tasks.filter((t: { status: string }) => t.status === 'done' || t.status === 'closed')
+
+    // avg shift duration in hours
+    let avgShiftHours = 0
+    if (completed.length > 0) {
+      const durations = completed.map((s: { time_start: string; time_end: string }) => {
+        const [sh, sm] = s.time_start.split(':').map(Number)
+        const [eh, em] = s.time_end.split(':').map(Number)
+        return (eh * 60 + em) - (sh * 60 + sm)
+      }).filter((d: number) => d > 0)
+      if (durations.length > 0) {
+        avgShiftHours = Math.round(durations.reduce((a: number, b: number) => a + b, 0) / durations.length / 60 * 10) / 10
+      }
+    }
+
+    return res.json({
+      ...emp,
+      kpi: {
+        shifts_total:     shifts.length,
+        shifts_completed: completed.length,
+        tasks_total:      tasks.length,
+        tasks_done:       tasksDone.length,
+        avg_shift_hours:  avgShiftHours,
+      },
+    })
+  } catch (e: unknown) {
+    const msg = e instanceof Error ? e.message : 'Internal server error'
+    return res.status(500).json({ error: msg })
+  }
+})
+
 // PATCH /employees/:id
 router.patch('/:id', requirePermission('employees', 'edit'), async (req: Request, res: Response) => {
   try {
     const { id } = req.params
-    const { first_name, last_name, middle_name, full_name, phone, birth_date, position, department, address } = req.body
+    const { first_name, last_name, middle_name, full_name, phone, birth_date, position, department, address, salary_rate, payment_type } = req.body
     const patch: Record<string, unknown> = {}
-    if (full_name   !== undefined) patch.full_name   = full_name
-    if (first_name  !== undefined) patch.first_name  = first_name
-    if (last_name   !== undefined) patch.last_name   = last_name
-    if (middle_name !== undefined) patch.middle_name = middle_name
-    if (phone       !== undefined) patch.phone       = phone
-    if (birth_date  !== undefined) patch.birth_date  = birth_date
-    if (position    !== undefined) patch.position    = position
-    if (department  !== undefined) patch.department  = department
-    if (address     !== undefined) patch.address     = address
+    if (full_name     !== undefined) patch.full_name     = full_name
+    if (first_name    !== undefined) patch.first_name    = first_name
+    if (last_name     !== undefined) patch.last_name     = last_name
+    if (middle_name   !== undefined) patch.middle_name   = middle_name
+    if (phone         !== undefined) patch.phone         = phone
+    if (birth_date    !== undefined) patch.birth_date    = birth_date
+    if (position      !== undefined) patch.position      = position
+    if (department    !== undefined) patch.department    = department
+    if (address       !== undefined) patch.address       = address
+    if (salary_rate   !== undefined) patch.salary_rate   = salary_rate
+    if (payment_type  !== undefined) patch.payment_type  = payment_type
 
     if (first_name !== undefined && last_name !== undefined) {
       patch.full_name = composeName(first_name, last_name, middle_name)

@@ -33,6 +33,12 @@ import suppliersRouter from './routes/suppliers.routes'
 import badgesRouter from './routes/badges.routes'
 import permissionsRouter from './routes/permissions.routes'
 import mfaRouter from './routes/mfa'
+import promoCodesRouter from './routes/promo-codes.routes'
+import supplierOrdersRouter from './routes/supplier-orders.routes'
+import branchSettingsRouter from './routes/branch-settings.routes'
+import { startSubscriptionCron } from './crons/subscriptions.cron'
+import { startLeadsCron } from './crons/leads.cron'
+import { startTasksCron } from './crons/tasks.cron'
 
 dotenv.config()
 
@@ -165,6 +171,9 @@ app.use('/api/v1/catalog', catalogRouter)
 app.use('/api/v1/suppliers', suppliersRouter)
 app.use('/api/v1/badges', badgesRouter)
 app.use('/api/v1/permissions', permissionsRouter)
+app.use('/api/v1/promo-codes', promoCodesRouter)
+app.use('/api/v1/supplier-orders', supplierOrdersRouter)
+app.use('/api/v1/branch-settings', branchSettingsRouter)
 
 // 404
 app.use((_req, res) => {
@@ -179,6 +188,9 @@ app.use((err: any, req: any, res: any, next: any) => {
 
 app.listen(PORT, () => {
   console.log(`Slimway backend running on port ${PORT}`)
+  startSubscriptionCron()
+  startLeadsCron()
+  startTasksCron()
 })
 
 export default app

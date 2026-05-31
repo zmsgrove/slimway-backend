@@ -131,7 +131,7 @@ router.get('/:id', requirePermission('leads', 'view'), async (req: Request, res:
 // PATCH /leads/:id
 router.patch('/:id', requirePermission('leads', 'edit'), async (req: Request, res: Response) => {
   const { id } = req.params
-  const { full_name, phone, source, notes, assigned_to, status, client_id, desired_template_id } = req.body
+  const { full_name, phone, source, notes, assigned_to, status, client_id, desired_template_id, fail_reason } = req.body
 
   const updates: Record<string, unknown> = { updated_at: new Date().toISOString() }
   if (full_name           !== undefined) updates.full_name           = full_name
@@ -139,6 +139,7 @@ router.patch('/:id', requirePermission('leads', 'edit'), async (req: Request, re
   if (source              !== undefined) updates.source              = source
   if (notes               !== undefined) updates.notes               = notes
   if (desired_template_id !== undefined) updates.desired_template_id = desired_template_id
+  if (fail_reason         !== undefined) updates.fail_reason         = fail_reason
   if (assigned_to !== undefined) {
     if (assigned_to) {
       const { data: emp } = await supabase
@@ -169,7 +170,7 @@ router.patch('/:id', requirePermission('leads', 'edit'), async (req: Request, re
 router.patch('/:id/status', requirePermission('leads', 'edit'), async (req: Request, res: Response) => {
   try {
     const { id } = req.params
-    const { status } = req.body
+    const { status, fail_reason } = req.body
 
     if (!status) {
       return res.status(400).json({ error: 'status required', code: 'VALIDATION_ERROR' })
@@ -184,6 +185,7 @@ router.patch('/:id/status', requirePermission('leads', 'edit'), async (req: Requ
     if (leadErr || !lead) return res.status(404).json({ error: 'Lead not found' })
 
     const updates: Record<string, unknown> = { status, updated_at: new Date().toISOString(), status_changed_at: new Date().toISOString() }
+    if (status === 'fail' && fail_reason !== undefined) updates.fail_reason = fail_reason
     let newClientId: string | null = null
     let clientRecord: { id: string; full_name: string; phone: string | null } | null = null
 

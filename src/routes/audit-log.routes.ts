@@ -1,22 +1,26 @@
 import { Router, Request, Response } from 'express'
 import { supabase } from '../config/supabase'
+import { resolveBranchId } from '../utils/resolveBranchId'
 
 const router = Router()
 
-// GET /audit-log?entity_id=:id
+// GET /audit-log — supports ?entity_id=, ?entity_type=, or branch-level list
 router.get('/', async (req: Request, res: Response) => {
-  const { entity_id, entity_type } = req.query
-
-  if (!entity_id) {
-    return res.status(400).json({ error: 'entity_id required', code: 'VALIDATION_ERROR' })
-  }
+  const { entity_id, entity_type, limit } = req.query
 
   let query = supabase
     .from('audit_log')
     .select('*')
-    .eq('entity_id', entity_id as string)
     .order('created_at', { ascending: false })
-    .limit(100)
+    .limit(parseInt(limit as string) || 200)
+
+  if (entity_id) {
+    query = query.eq('entity_id', entity_id as string)
+  } else {
+    // branch-level: scope to current branch
+    const branchId = await resolveBranchId(req.user!)
+    if (branchId) query = query.eq('branch_id', branchId)
+  }
 
   if (entity_type) query = query.eq('entity_type', entity_type as string)
 
