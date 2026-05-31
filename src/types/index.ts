@@ -7,10 +7,17 @@ export interface AuthUser {
   email: string
 }
 
+export interface ClientUser {
+  id: string
+  branch_id: string
+  full_name: string
+}
+
 declare global {
   namespace Express {
     interface Request {
       user?: AuthUser
+      client?: ClientUser
     }
   }
 }

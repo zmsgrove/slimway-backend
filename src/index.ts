@@ -36,6 +36,10 @@ import mfaRouter from './routes/mfa'
 import promoCodesRouter from './routes/promo-codes.routes'
 import supplierOrdersRouter from './routes/supplier-orders.routes'
 import branchSettingsRouter from './routes/branch-settings.routes'
+import clientRouter from './routes/client.routes'
+import clientMessagesRouter from './routes/client-messages.routes'
+import publicBookingRouter from './routes/public-booking.routes'
+import bookingLinkRouter from './routes/booking-link.routes'
 import { startSubscriptionCron } from './crons/subscriptions.cron'
 import { startLeadsCron } from './crons/leads.cron'
 import { startTasksCron } from './crons/tasks.cron'
@@ -50,7 +54,8 @@ app.use(helmet())
 app.use(cors({
   origin: [
     process.env.FRONTEND_URL || 'http://localhost:5173',
-    'https://slimway.com.kz'
+    'https://slimway.com.kz',
+    'https://slimway-frontend.onrender.com',
   ],
   credentials: true
 }))
@@ -174,6 +179,18 @@ app.use('/api/v1/permissions', permissionsRouter)
 app.use('/api/v1/promo-codes', promoCodesRouter)
 app.use('/api/v1/supplier-orders', supplierOrdersRouter)
 app.use('/api/v1/branch-settings', branchSettingsRouter)
+
+// Client portal — public auth + protected routes (own middleware)
+app.use('/api/client', clientRouter)
+
+// Public booking page (no auth)
+app.use('/api/public/booking', publicBookingRouter)
+
+// CRM-side client messages (uses standard requireAuth + resolveBranch)
+app.use('/api/v1/client-messages', clientMessagesRouter)
+
+// Booking link management (uses standard auth)
+app.use('/api/v1/booking-link', bookingLinkRouter)
 
 // 404
 app.use((_req, res) => {

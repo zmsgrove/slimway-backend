@@ -1,4 +1,5 @@
 import { Router, Request, Response } from 'express'
+import { randomUUID } from 'crypto'
 import { supabase } from '../config/supabase'
 import { requirePermission } from '../middleware/permission.middleware'
 import { resolveBranchId } from '../utils/resolveBranchId'
@@ -205,6 +206,39 @@ router.post('/:id/unfreeze', requirePermission('clients', 'edit'), async (req: R
 
     if (error) return res.status(500).json({ error: error.message })
     return res.json(data)
+  } catch (e: unknown) {
+    return res.status(500).json({ error: e instanceof Error ? e.message : 'Internal server error' })
+  }
+})
+
+// POST /clients/:id/portal-token — generate/return client portal token
+router.post('/:id/portal-token', requirePermission('clients', 'view'), async (req: Request, res: Response) => {
+  try {
+    const { id } = req.params
+    const branchId = await resolveBranchId(req.user!)
+
+    const { data: client } = await supabase.from('clients').select('id, branch_id').eq('id', id).single()
+    if (!client) return res.status(404).json({ error: 'Client not found', code: 'NOT_FOUND' })
+    if (branchId && client.branch_id !== branchId) return res.status(403).json({ error: 'Access denied', code: 'FORBIDDEN' })
+
+    const existing = await supabase
+      .from('client_tokens')
+      .select('token, expires_at')
+      .eq('client_id', id)
+      .gt('expires_at', new Date().toISOString())
+      .order('expires_at', { ascending: false })
+      .limit(1)
+      .maybeSingle()
+
+    if (existing.data?.token) {
+      return res.json({ token: existing.data.token })
+    }
+
+    const token = randomUUID()
+    const expiresAt = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString()
+    const { error } = await supabase.from('client_tokens').insert({ token, client_id: id, expires_at: expiresAt })
+    if (error) return res.status(500).json({ error: error.message })
+    return res.json({ token })
   } catch (e: unknown) {
     return res.status(500).json({ error: e instanceof Error ? e.message : 'Internal server error' })
   }
