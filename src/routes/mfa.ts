@@ -32,7 +32,19 @@ router.get('/status', async (req: Request, res: Response) => {
 router.post('/enroll', async (req: Request, res: Response) => {
   try {
     const token = req.headers.authorization!.split(' ')[1]
-    const resp  = await fetch(`${GOTRUE}/factors`, {
+
+    // Удалить незавершённые TOTP факторы перед созданием нового (иначе GoTrue вернёт 422)
+    const { data: { user: existingUser } } = await supabase.auth.admin.getUserById(req.user!.id)
+    const unverified = (existingUser?.factors ?? []).filter(
+      (f: { factor_type: string; status: string }) => f.factor_type === 'totp' && f.status === 'unverified'
+    )
+    for (const factor of unverified as { id: string }[]) {
+      await fetch(`${GOTRUE}/factors/${factor.id}`, {
+        method: 'DELETE', headers: headers(token),
+      })
+    }
+
+    const resp = await fetch(`${GOTRUE}/factors`, {
       method:  'POST',
       headers: headers(token),
       body:    JSON.stringify({ factor_type: 'totp', friendly_name: 'Google Authenticator', issuer: 'Slimway CRM' }),
