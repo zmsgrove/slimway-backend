@@ -65,25 +65,37 @@ router.post('/verify', async (req: Request, res: Response) => {
     const { factor_id, code } = req.body as { factor_id?: string; code?: string }
     if (!factor_id || !code) return res.status(400).json({ error: 'factor_id and code required' })
     const token = req.headers.authorization!.split(' ')[1]
+    const trimmedCode = code.trim()
+
+    console.log('[mfa verify] factor_id:', factor_id, 'code length:', trimmedCode.length)
 
     const chalResp = await fetch(`${GOTRUE}/factors/${factor_id}/challenge`, {
       method: 'POST', headers: headers(token),
     })
     const challenge = await chalResp.json() as Record<string, unknown>
-    if (!chalResp.ok) return res.status(chalResp.status).json(challenge)
+    console.log('[mfa verify] challenge status:', chalResp.status, 'challenge.id:', challenge.id)
+    if (!chalResp.ok) {
+      console.error('[mfa verify] challenge failed:', challenge)
+      return res.status(chalResp.status).json(challenge)
+    }
 
     const verResp = await fetch(`${GOTRUE}/factors/${factor_id}/verify`, {
       method:  'POST',
       headers: headers(token),
-      body:    JSON.stringify({ challenge_id: challenge.id, code }),
+      body:    JSON.stringify({ challenge_id: challenge.id, code: trimmedCode }),
     })
     const verData = await verResp.json() as Record<string, unknown>
-    if (!verResp.ok) return res.status(verResp.status).json(verData)
+    console.log('[mfa verify] verify status:', verResp.status)
+
+    if (!verResp.ok) {
+      console.error('[mfa verify] verify failed:', verData)
+      return res.status(400).json({ error: 'Неверный код. Проверьте время на устройстве.' })
+    }
 
     res.json({ success: true, access_token: verData.access_token ?? null, refresh_token: verData.refresh_token ?? null })
   } catch (e) {
-    console.error('[mfa verify]', e)
-    res.status(500).json({ error: 'Неверный код' })
+    console.error('[mfa verify error]', e)
+    res.status(500).json({ error: 'Ошибка верификации' })
   }
 })
 
