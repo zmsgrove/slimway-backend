@@ -25,12 +25,16 @@ function composeName(first: string, last: string, middle?: string): string {
 router.get('/', requirePermission('employees', 'view'), async (req: Request, res: Response) => {
   try {
     const branchId = await resolveBranchId(req.user!)
-    let query = supabase.from('employees').select('*, profiles(role)').order('full_name')
+    let query = supabase.from('employees').select('*, profiles!profile_id(role)').order('full_name')
     if (branchId) query = query.eq('branch_id', branchId)
     const { data, error } = await query
-    if (error) return res.status(500).json({ error: error.message })
+    if (error) {
+      console.error('[GET /employees] Supabase error:', error)
+      return res.status(500).json({ error: error.message })
+    }
     return res.json(data)
   } catch (e: unknown) {
+    console.error('[GET /employees] Unexpected error:', e)
     const msg = e instanceof Error ? e.message : 'Internal server error'
     return res.status(500).json({ error: msg })
   }

@@ -11,9 +11,13 @@ router.get('/', async (req: Request, res: Response) => {
     let query = supabase.from('suppliers').select('*').order('name')
     if (branch_id) query = query.eq('branch_id', branch_id)
     const { data, error } = await query
-    if (error) return res.status(500).json({ error: error.message })
+    if (error) {
+      console.error('[GET /suppliers] Supabase error (table may not exist):', error)
+      return res.status(500).json({ error: error.message, code: 'DB_ERROR' })
+    }
     return res.json(data ?? [])
   } catch (e: unknown) {
+    console.error('[GET /suppliers] Unexpected error:', e)
     return res.status(500).json({ error: e instanceof Error ? e.message : 'Internal server error' })
   }
 })
