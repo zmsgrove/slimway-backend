@@ -10,7 +10,7 @@ const router = Router()
 router.get('/', requirePermission('leads', 'view'), async (req: Request, res: Response) => {
   try {
     const { branch_id } = req.user!
-    const { status, archived } = req.query
+    const { status, archived, from, to } = req.query
 
     let query = supabase
       .from('leads')
@@ -26,6 +26,8 @@ router.get('/', requirePermission('leads', 'view'), async (req: Request, res: Re
     }
 
     if (status) query = query.eq('status', status as string)
+    if (from) query = query.gte('created_at', `${from as string}T00:00:00`)
+    if (to)   query = query.lte('created_at', `${to as string}T23:59:59`)
 
     const { data, error } = await query
     if (error) {

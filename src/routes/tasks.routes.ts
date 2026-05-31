@@ -26,6 +26,11 @@ router.get('/', async (req: Request, res: Response) => {
 
     if (branchId) query = query.eq('branch_id', branchId)
 
+    const { from, to, date_field } = req.query
+    const dateCol = date_field === 'deadline' ? 'deadline' : 'created_at'
+    if (from) query = query.gte(dateCol, `${from as string}T00:00:00`)
+    if (to)   query = query.lte(dateCol, `${to as string}T23:59:59`)
+
     if (!isPrivileged) {
       const userId = req.user!.id
       const { data: emp } = await supabase

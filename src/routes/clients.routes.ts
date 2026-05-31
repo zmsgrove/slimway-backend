@@ -8,7 +8,7 @@ const router = Router()
 // GET /clients
 router.get('/', requirePermission('clients', 'view'), async (req: Request, res: Response) => {
   const { branch_id } = req.user!
-  const { search } = req.query
+  const { search, from, to } = req.query
 
   let query = supabase
     .from('clients')
@@ -18,6 +18,8 @@ router.get('/', requirePermission('clients', 'view'), async (req: Request, res: 
 
   if (branch_id) query = query.eq('branch_id', branch_id)
   if (search) query = query.ilike('full_name', `%${search}%`)
+  if (from) query = query.gte('created_at', `${from as string}T00:00:00`)
+  if (to)   query = query.lte('created_at', `${to as string}T23:59:59`)
 
   const { data, error } = await query
 

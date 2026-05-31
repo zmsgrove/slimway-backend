@@ -47,10 +47,41 @@ router.get('/', requirePermission('employees', 'view'), async (req: Request, res
       profiles = (pData ?? []) as Array<Record<string, unknown>>
     }
 
-    const result = (employees ?? []).map((emp: Record<string, unknown>) => ({
-      ...emp,
-      profile: profiles.find((p) => p.id === emp.profile_id) ?? null,
-    }))
+    const { from, to } = req.query
+    const employeeIds = (employees ?? []).map((e: Record<string, unknown>) => e.id as string)
+
+    let shiftsData: Array<Record<string, unknown>> = []
+    let tasksData:  Array<Record<string, unknown>> = []
+
+    if (employeeIds.length > 0) {
+      let shiftsQ = supabase.from('shifts').select('id, employee_id, status').in('employee_id', employeeIds)
+      if (from) shiftsQ = shiftsQ.gte('date', from as string)
+      if (to)   shiftsQ = shiftsQ.lte('date', to   as string)
+
+      const [sRes, tRes] = await Promise.all([
+        shiftsQ,
+        supabase.from('tasks').select('id, assigned_to, status').in('assigned_to', employeeIds),
+      ])
+      shiftsData = (sRes.data ?? []) as Array<Record<string, unknown>>
+      tasksData  = (tRes.data ?? []) as Array<Record<string, unknown>>
+    }
+
+    const result = (employees ?? []).map((emp: Record<string, unknown>) => {
+      const empId = emp.id as string
+      const empShifts = shiftsData.filter(s => s.employee_id === empId)
+      const empTasks  = tasksData.filter(t => t.assigned_to  === empId)
+      return {
+        ...emp,
+        profile: profiles.find((p) => p.id === emp.profile_id) ?? null,
+        kpi: {
+          shifts_total:     empShifts.length,
+          shifts_completed: empShifts.filter(s => s.status === 'completed').length,
+          tasks_total:      empTasks.length,
+          tasks_done:       empTasks.filter(t => t.status === 'done' || t.status === 'closed').length,
+          avg_shift_hours:  0,
+        },
+      }
+    })
 
     return res.json(result)
   } catch (e: unknown) {
