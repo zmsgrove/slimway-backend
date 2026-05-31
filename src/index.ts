@@ -40,6 +40,7 @@ import clientRouter from './routes/client.routes'
 import clientMessagesRouter from './routes/client-messages.routes'
 import publicBookingRouter from './routes/public-booking.routes'
 import bookingLinkRouter from './routes/booking-link.routes'
+import automationRouter from './routes/automation.routes'
 import { startSubscriptionCron } from './crons/subscriptions.cron'
 import { startLeadsCron } from './crons/leads.cron'
 import { startTasksCron } from './crons/tasks.cron'
@@ -191,6 +192,9 @@ app.use('/api/v1/client-messages', clientMessagesRouter)
 
 // Booking link management (uses standard auth)
 app.use('/api/v1/booking-link', bookingLinkRouter)
+
+// Automation module (coming soon)
+app.use('/api/v1/automation', automationRouter)
 
 // 404
 app.use((_req, res) => {
