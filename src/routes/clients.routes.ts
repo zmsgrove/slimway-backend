@@ -236,9 +236,18 @@ router.post('/:id/portal-token', requirePermission('clients', 'view'), async (re
 
     const token = randomUUID()
     const expiresAt = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString()
-    const { error } = await supabase.from('client_tokens').insert({ token, client_id: id, expires_at: expiresAt })
-    if (error) return res.status(500).json({ error: error.message })
-    return res.json({ token })
+    const { error } = await supabase.from('client_tokens').insert({
+      client_id: id,
+      branch_id: branchId,
+      token,
+      expires_at: expiresAt,
+    })
+    if (error) {
+      console.error('[portal-token]', error)
+      return res.status(500).json({ error: error.message })
+    }
+    const portalUrl = `${process.env.FRONTEND_URL || 'https://slimway-frontend.onrender.com'}/client/${token}`
+    return res.json({ token, url: portalUrl })
   } catch (e: unknown) {
     return res.status(500).json({ error: e instanceof Error ? e.message : 'Internal server error' })
   }
