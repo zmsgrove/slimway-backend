@@ -24,31 +24,28 @@ router.get('/', requirePermission('permissions', 'view'), async (req: Request, r
   }
 })
 
-// POST /permissions — создать/обновить override
+// POST /permissions — создать/обновить override (deny = удалить override)
 router.post('/', requirePermission('permissions', 'edit'), async (req: Request, res: Response) => {
   try {
     const actorRole = req.user!.role as Role
-    const { role: targetRole, resource, action, state, branch_id } = req.body
+    const { role: targetRole, resource, action, state } = req.body
 
     if (!targetRole || !resource || !action || !state) {
       return res.status(400).json({ error: 'role, resource, action, state required', code: 'VALIDATION_ERROR' })
     }
 
-    if (!['allow','deny','locked'].includes(state)) {
+    if (!['allow', 'deny', 'locked'].includes(state)) {
       return res.status(400).json({ error: 'state must be allow, deny, or locked', code: 'VALIDATION_ERROR' })
     }
 
-    // Проверяем иерархию
     if (!canEditRolePermissions(actorRole, targetRole as Role)) {
-      return res.status(403).json({ error: 'Недостаточно прав для изменения прав этой роли', code: 'FORBIDDEN' })
+      return res.status(403).json({ error: 'Недостаточно прав для редактирования этой роли', code: 'FORBIDDEN' })
     }
 
-    // Только developer может ставить locked
     if (state === 'locked' && !canSetLocked(actorRole)) {
-      return res.status(403).json({ error: 'Только developer может устанавливать locked', code: 'FORBIDDEN' })
+      return res.status(403).json({ error: 'Только developer может блокировать права', code: 'FORBIDDEN' })
     }
 
-    // Проверяем, не заблокирована ли ячейка
     if (actorRole !== 'developer') {
       const { data: existing } = await supabase
         .from('permission_overrides')
@@ -56,52 +53,55 @@ router.post('/', requirePermission('permissions', 'edit'), async (req: Request, 
         .eq('role', targetRole)
         .eq('resource', resource)
         .eq('action', action)
+        .is('branch_id', null)
         .maybeSingle()
-
       if (existing?.state === 'locked') {
-        return res.status(403).json({ error: 'Эта ячейка заблокирована. Только developer может её изменить', code: 'LOCKED' })
+        return res.status(403).json({ error: 'Ячейка заблокирована. Только developer может изменить', code: 'LOCKED' })
       }
     }
 
-    const resolvedBranchId: string | null = branch_id ?? null
+    if (state === 'deny') {
+      // deny = удалить override, вернуть к дефолту
+      const { error } = await supabase
+        .from('permission_overrides')
+        .delete()
+        .eq('role', targetRole)
+        .eq('resource', resource)
+        .eq('action', action)
+        .is('branch_id', null)
 
-    const { error } = await supabase
+      if (error) {
+        console.error('[permissions POST] delete error:', error)
+        throw error
+      }
+      return res.json({ success: true, state: 'deny' })
+    }
+
+    // allow или locked — upsert
+    const { data, error } = await supabase
       .from('permission_overrides')
-      .upsert(
-        {
-          role:       targetRole,
-          resource,
-          action,
-          state,
-          set_by:     actorRole,
-          branch_id:  resolvedBranchId,
-          updated_at: new Date().toISOString(),
-        },
-        { onConflict: 'role,resource,action,branch_id' }
-      )
+      .upsert({
+        role:       targetRole,
+        resource,
+        action,
+        state,
+        set_by:     actorRole,
+        branch_id:  null,
+        updated_at: new Date().toISOString(),
+      }, {
+        onConflict: 'role,resource,action,branch_id',
+      })
+      .select()
+      .single()
 
     if (error) {
       console.error('[permissions POST] upsert error:', error)
-      return res.status(500).json({ error: error.message })
+      throw error
     }
 
-    // upsert with onConflict doesn't reliably return data — fetch separately
-    let selectQuery = supabase
-      .from('permission_overrides')
-      .select('*')
-      .eq('role', targetRole)
-      .eq('resource', resource)
-      .eq('action', action)
-
-    if (resolvedBranchId === null) {
-      selectQuery = selectQuery.is('branch_id', null)
-    } else {
-      selectQuery = selectQuery.eq('branch_id', resolvedBranchId)
-    }
-
-    const { data: result } = await selectQuery.single()
-    return res.status(201).json(result ?? {})
+    return res.status(201).json({ success: true, data })
   } catch (e: unknown) {
+    console.error('[permissions POST error]', e)
     const msg = e instanceof Error ? e.message : 'Internal server error'
     return res.status(500).json({ error: msg })
   }

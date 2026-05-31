@@ -198,29 +198,41 @@ router.get('/:id', requirePermission('employees', 'view'), async (req: Request, 
 router.patch('/:id', requirePermission('employees', 'edit'), async (req: Request, res: Response) => {
   try {
     const { id } = req.params
-    const { first_name, last_name, middle_name, full_name, phone, birth_date, position, department, address, salary_rate, payment_type } = req.body
-    const patch: Record<string, unknown> = {}
-    if (full_name     !== undefined) patch.full_name     = full_name
-    if (first_name    !== undefined) patch.first_name    = first_name
-    if (last_name     !== undefined) patch.last_name     = last_name
-    if (middle_name   !== undefined) patch.middle_name   = middle_name
-    if (phone         !== undefined) patch.phone         = phone
-    if (birth_date    !== undefined) patch.birth_date    = birth_date
-    if (position      !== undefined) patch.position      = position
-    if (department    !== undefined) patch.department    = department
-    if (address       !== undefined) patch.address       = address
-    if (salary_rate   !== undefined) patch.salary_rate   = salary_rate
-    if (payment_type  !== undefined) patch.payment_type  = payment_type
+    const branchId = await resolveBranchId(req.user!)
 
+    const ALLOWED_FIELDS = [
+      'full_name', 'first_name', 'last_name', 'middle_name',
+      'phone', 'birth_date', 'position', 'department', 'address',
+      'salary_rate', 'payment_type',
+      'base_salary', 'kpi_amount', 'sales_percent',
+    ]
+
+    const updateData: Record<string, unknown> = Object.fromEntries(
+      Object.entries(req.body).filter(([key]) => ALLOWED_FIELDS.includes(key))
+    )
+
+    // Auto-compose full_name when name parts are provided
+    const { first_name, last_name, middle_name } = req.body
     if (first_name !== undefined && last_name !== undefined) {
-      patch.full_name = composeName(first_name, last_name, middle_name)
+      updateData.full_name = composeName(first_name, last_name, middle_name)
     }
 
-    const { data, error } = await supabase.from('employees').update(patch).eq('id', id).select().single()
-    if (error) return res.status(500).json({ error: error.message })
+    if (Object.keys(updateData).length === 0) {
+      return res.status(400).json({ error: 'No valid fields to update', code: 'VALIDATION_ERROR' })
+    }
+
+    let q = supabase.from('employees').update(updateData).eq('id', id)
+    if (branchId) q = q.eq('branch_id', branchId)
+    const { data, error } = await q.select().single()
+
+    if (error) {
+      console.error('[PATCH /employees]', error)
+      return res.status(500).json({ error: error.message })
+    }
     return res.json(data)
   } catch (e: unknown) {
     const msg = e instanceof Error ? e.message : 'Internal server error'
+    console.error('[PATCH /employees] unexpected:', e)
     return res.status(500).json({ error: msg })
   }
 })
