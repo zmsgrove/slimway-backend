@@ -70,6 +70,9 @@ export const DEFAULT_PERMISSIONS: Record<string, Record<string, Role[]>> = {
     view: ['developer','owner','franchisee'],
     edit: ['developer','owner','franchisee'],
   },
+  api_keys: {
+    manage: ['developer','owner','franchisee'],
+  },
 }
 
 export interface PermissionOverride {

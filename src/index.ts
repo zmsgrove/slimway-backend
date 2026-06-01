@@ -45,6 +45,9 @@ import timesheetRouter from './routes/timesheet.routes'
 import { startSubscriptionCron } from './crons/subscriptions.cron'
 import { startLeadsCron } from './crons/leads.cron'
 import { startTasksCron } from './crons/tasks.cron'
+import apiKeysRouter from './routes/api-keys.routes'
+import swaggerUi from 'swagger-ui-express'
+import { swaggerSpec } from './config/swagger'
 
 dotenv.config()
 
@@ -68,6 +71,12 @@ app.use(express.json())
 app.get('/health', (_req, res) => {
   res.json({ status: 'ok', version: '1.0.0' })
 })
+
+// Swagger UI — публичный, без авторизации
+app.use('/api/docs', swaggerUi.serve, swaggerUi.setup(swaggerSpec, {
+  customSiteTitle: 'Slimway CRM API',
+  swaggerOptions: { persistAuthorization: true },
+}))
 
 // Tilda CRM proxy
 app.post('/api/tilda-proxy', async (req, res) => {
@@ -199,6 +208,9 @@ app.use('/api/v1/automation', automationRouter)
 
 // Timesheet
 app.use('/api/v1/timesheet', timesheetRouter)
+
+// API Keys
+app.use('/api/v1/api-keys', apiKeysRouter)
 
 // 404
 app.use((_req, res) => {

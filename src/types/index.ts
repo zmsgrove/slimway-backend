@@ -13,11 +13,17 @@ export interface ClientUser {
   full_name: string
 }
 
+export interface ApiKeyContext {
+  branch_id: string
+  scopes: string[]
+}
+
 declare global {
   namespace Express {
     interface Request {
       user?: AuthUser
       client?: ClientUser
+      apiKey?: ApiKeyContext
     }
   }
 }
