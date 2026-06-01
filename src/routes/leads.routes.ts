@@ -101,6 +101,48 @@ router.post('/', requirePermission('leads', 'create'), async (req: Request, res:
       console.error('[leads POST /]', error)
       return res.status(500).json({ error: error.message, code: error.code })
     }
+
+    // Automation: fire lead_created rules (fire-and-forget style, non-blocking)
+    const { data: rules } = await supabase
+      .from('automation_rules')
+      .select('*')
+      .eq('branch_id', branchId)
+      .eq('trigger_type', 'lead_created')
+      .eq('is_active', true)
+
+    if (rules && rules.length > 0) {
+      for (const rule of rules) {
+        const title = (rule.task_title_template as string).replace('{{lead_name}}', full_name)
+        const { data: task } = await supabase
+          .from('tasks')
+          .insert({
+            branch_id:    branchId,
+            title,
+            priority:     (rule.task_priority as string) || 'medium',
+            status:       'new',
+            assigned_to:  null,
+            observer_ids: [],
+            related_type: 'lead',
+            related_id:   data.id,
+            created_by:   req.user!.id,
+          })
+          .select('id')
+          .single()
+
+        if (task) {
+          await logAction({
+            branch_id:   branchId,
+            entity_type: 'task',
+            entity_id:   task.id,
+            action:      'auto_created',
+            actor_id:    'system',
+            actor_name:  'system',
+            details:     { rule_id: rule.id, trigger: 'lead_created', lead_id: data.id, lead_name: full_name },
+          })
+        }
+      }
+    }
+
     return res.status(201).json(data)
   } catch (e: unknown) {
     const msg = e instanceof Error ? e.message : 'Internal server error'
