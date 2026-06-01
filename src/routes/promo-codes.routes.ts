@@ -38,7 +38,10 @@ router.get('/validate/:code', requirePermission('subscriptions', 'view'), async 
     if (data.max_uses !== null && data.uses_count >= data.max_uses) return res.status(400).json({ error: 'Промокод исчерпан', code: 'EXHAUSTED' })
     if (data.expires_at && new Date(data.expires_at) < new Date()) return res.status(400).json({ error: 'Промокод истёк', code: 'EXPIRED' })
 
-    return res.json({ valid: true, discount_type: data.discount_type, discount_value: data.discount_value, id: data.id })
+    const description = data.discount_type === 'percent'
+      ? `Скидка ${data.discount_value}%`
+      : `Скидка ${data.discount_value} ₸`
+    return res.json({ valid: true, discount_type: data.discount_type, discount_value: data.discount_value, id: data.id, description })
   } catch (e: unknown) {
     return res.status(500).json({ error: e instanceof Error ? e.message : 'Internal server error' })
   }

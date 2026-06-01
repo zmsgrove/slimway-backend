@@ -5,6 +5,13 @@ import { resolveBranchId } from '../utils/resolveBranchId'
 
 const router = Router()
 
+function monthRange(month: string): { dateFrom: string; dateTo: string } {
+  const [year, mon] = month.split('-').map(Number)
+  const dateFrom = `${month}-01`
+  const dateTo = new Date(year, mon, 0).toISOString().split('T')[0]
+  return { dateFrom, dateTo }
+}
+
 // GET /timesheet?month=YYYY-MM
 router.get('/', requirePermission('employees', 'view'), async (req: Request, res: Response) => {
   try {
@@ -16,12 +23,14 @@ router.get('/', requirePermission('employees', 'view'), async (req: Request, res
       return res.status(400).json({ error: 'month param required (YYYY-MM)', code: 'VALIDATION_ERROR' })
     }
 
+    const { dateFrom, dateTo } = monthRange(month)
+
     const { data, error } = await supabase
       .from('timesheet')
       .select('*, employees(id, full_name, position)')
       .eq('branch_id', branchId)
-      .gte('date', `${month}-01`)
-      .lte('date', `${month}-31`)
+      .gte('date', dateFrom)
+      .lte('date', dateTo)
       .order('date', { ascending: true })
 
     if (error) return res.status(500).json({ error: error.message })
@@ -42,8 +51,7 @@ router.post('/generate', requirePermission('employees', 'edit'), async (req: Req
       return res.status(400).json({ error: 'month required (YYYY-MM)', code: 'VALIDATION_ERROR' })
     }
 
-    const dateFrom = `${month}-01`
-    const dateTo   = `${month}-31`
+    const { dateFrom, dateTo } = monthRange(month)
 
     const { data: shifts, error: shiftsErr } = await supabase
       .from('shifts')
@@ -115,12 +123,14 @@ router.get('/summary', requirePermission('employees', 'view'), async (req: Reque
       return res.status(400).json({ error: 'month param required (YYYY-MM)', code: 'VALIDATION_ERROR' })
     }
 
+    const { dateFrom, dateTo } = monthRange(month)
+
     const { data, error } = await supabase
       .from('timesheet')
       .select('employee_id, status, hours, employees(id, full_name, position)')
       .eq('branch_id', branchId)
-      .gte('date', `${month}-01`)
-      .lte('date', `${month}-31`)
+      .gte('date', dateFrom)
+      .lte('date', dateTo)
 
     if (error) return res.status(500).json({ error: error.message })
 
