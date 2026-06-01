@@ -63,7 +63,7 @@ router.post('/', requirePermission('subscriptions', 'edit'), async (req: Request
         discount_value,
         max_uses: max_uses ?? null,
         expires_at: expires_at ?? null,
-        max_uses_per_client: max_uses_per_client ?? null,
+        max_uses_per_client: max_uses_per_client ?? 1,
       })
       .select()
       .single()
