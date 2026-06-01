@@ -1,9 +1,10 @@
 import cron from 'node-cron'
 import { supabase } from '../config/supabase'
 import { logAction } from '../utils/logAction'
+import { fireAutomationRules } from '../utils/fireAutomationRules'
 
 export function startLeadsCron(): void {
-  // Daily at 10:00 — flag stale leads (updated > 3 days ago, status not terminal)
+  // Daily at 10:00 — flag stale leads + fire lead_no_activity automation rules
   cron.schedule('0 10 * * *', async () => {
     try {
       const cutoff = new Date(Date.now() - 3 * 86400000).toISOString()
@@ -17,6 +18,7 @@ export function startLeadsCron(): void {
 
       if (!staleLeads || staleLeads.length === 0) return
 
+      const firedBranches = new Set<string>()
       for (const lead of staleLeads) {
         await logAction({
           branch_id:   lead.branch_id,
@@ -27,9 +29,14 @@ export function startLeadsCron(): void {
           actor_name:  'system',
           details:     { lead_name: lead.full_name, assigned_to: lead.assigned_to },
         })
+
+        if (!firedBranches.has(lead.branch_id)) {
+          firedBranches.add(lead.branch_id)
+          await fireAutomationRules(lead.branch_id, 'lead_no_activity', { lead_name: lead.full_name })
+        }
       }
 
-      console.log(`[leads cron] follow_up_reminder logged for ${staleLeads.length} stale leads`)
+      console.log(`[leads cron] follow_up_reminder for ${staleLeads.length} stale leads`)
     } catch (e) {
       console.error('[leads cron] error:', e)
     }

@@ -231,15 +231,14 @@ router.patch('/:id', requirePermission('employees', 'edit'), async (req: Request
     const { id } = req.params
     const branchId = await resolveBranchId(req.user!)
 
-    const ALLOWED_FIELDS = [
+    const EMPLOYEE_FIELDS = [
       'full_name', 'first_name', 'last_name', 'middle_name',
       'phone', 'birth_date', 'position', 'department', 'address',
-      'salary_rate', 'payment_type',
-      'base_salary', 'kpi_amount', 'sales_percent',
     ]
+    const SALARY_FIELDS = ['base_salary', 'kpi_amount', 'sales_percent']
 
     const updateData: Record<string, unknown> = Object.fromEntries(
-      Object.entries(req.body).filter(([key]) => ALLOWED_FIELDS.includes(key))
+      Object.entries(req.body).filter(([key]) => EMPLOYEE_FIELDS.includes(key))
     )
 
     // Auto-compose full_name when name parts are provided
@@ -248,19 +247,45 @@ router.patch('/:id', requirePermission('employees', 'edit'), async (req: Request
       updateData.full_name = composeName(first_name, last_name, middle_name)
     }
 
-    if (Object.keys(updateData).length === 0) {
+    if (Object.keys(updateData).length === 0 && !SALARY_FIELDS.some(f => f in req.body)) {
       return res.status(400).json({ error: 'No valid fields to update', code: 'VALIDATION_ERROR' })
     }
 
-    let q = supabase.from('employees').update(updateData).eq('id', id)
-    if (branchId) q = q.eq('branch_id', branchId)
-    const { data, error } = await q.select().single()
-
-    if (error) {
-      console.error('[PATCH /employees]', error)
-      return res.status(500).json({ error: error.message })
+    let employee: Record<string, unknown> | null = null
+    if (Object.keys(updateData).length > 0) {
+      let q = supabase.from('employees').update(updateData).eq('id', id)
+      if (branchId) q = q.eq('branch_id', branchId)
+      const { data, error } = await q.select().single()
+      if (error) {
+        console.error('[PATCH /employees]', error)
+        return res.status(500).json({ error: error.message })
+      }
+      employee = data
+    } else {
+      const { data } = await supabase.from('employees').select('*').eq('id', id).single()
+      employee = data
     }
-    return res.json(data)
+
+    // Route salary fields to employee_salary_settings
+    const hasSalaryFields = SALARY_FIELDS.some(f => f in req.body)
+    if (hasSalaryFields) {
+      const salaryPatch: Record<string, unknown> = {
+        employee_id: id,
+        branch_id:   branchId ?? employee?.branch_id,
+      }
+      if (req.body.base_salary  !== undefined) salaryPatch.base_salary                 = req.body.base_salary
+      if (req.body.kpi_amount   !== undefined) salaryPatch.kpi_subscriptions_amount     = req.body.kpi_amount
+      if (req.body.sales_percent !== undefined) salaryPatch.sales_subscriptions_percent = req.body.sales_percent
+
+      const { error: salaryErr } = await supabase
+        .from('employee_salary_settings')
+        .upsert(salaryPatch, { onConflict: 'employee_id' })
+      if (salaryErr) {
+        console.error('[PATCH /employees] salary_settings upsert error:', salaryErr)
+      }
+    }
+
+    return res.json(employee)
   } catch (e: unknown) {
     const msg = e instanceof Error ? e.message : 'Internal server error'
     console.error('[PATCH /employees] unexpected:', e)

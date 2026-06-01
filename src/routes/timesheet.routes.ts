@@ -68,7 +68,15 @@ router.post('/generate', requirePermission('employees', 'edit'), async (req: Req
 
     const entries = shifts.map((s: any) => {
       let status = 'pending'
-      let hours: number | null = null
+      let hours_planned: number | null = null
+      let hours_actual:  number | null = null
+      let actual_start:  string | null = null
+
+      if (s.time_start && s.time_end) {
+        const [sh, sm] = s.time_start.split(':').map(Number)
+        const [eh, em] = s.time_end.split(':').map(Number)
+        hours_planned = parseFloat(((eh * 60 + em - sh * 60 - sm) / 60).toFixed(2))
+      }
 
       if (s.status === 'cancelled') {
         status = 'absent'
@@ -79,33 +87,36 @@ router.post('/generate', requirePermission('employees', 'edit'), async (req: Req
           const actualStart    = new Date(checkin.checked_in_at)
           const diffMin = (actualStart.getTime() - scheduledStart.getTime()) / 60000
           status = diffMin > 15 ? 'late' : 'present'
+          actual_start = checkin.checked_in_at
         } else {
           status = 'present'
         }
-
-        if (s.time_start && s.time_end) {
-          const [sh, sm] = s.time_start.split(':').map(Number)
-          const [eh, em] = s.time_end.split(':').map(Number)
-          hours = parseFloat(((eh * 60 + em - sh * 60 - sm) / 60).toFixed(2))
-        }
+        hours_actual = hours_planned
       } else {
         status = 'absent'
       }
 
       return {
-        branch_id:   branchId,
-        employee_id: s.employee_id,
-        date:        s.date,
+        branch_id:    branchId,
+        employee_id:  s.employee_id,
+        date:         s.date,
+        planned_start: s.time_start || null,
+        planned_end:   s.time_end || null,
+        actual_start,
         status,
-        hours,
+        hours_planned,
+        hours_actual,
       }
     })
 
     const { error: upsertErr } = await supabase
       .from('timesheet')
-      .upsert(entries, { onConflict: 'branch_id,employee_id,date', ignoreDuplicates: false })
+      .upsert(entries, { onConflict: 'employee_id,date', ignoreDuplicates: false })
 
-    if (upsertErr) return res.status(500).json({ error: upsertErr.message })
+    if (upsertErr) {
+      console.error('[timesheet/generate] upsert error:', upsertErr)
+      return res.status(500).json({ error: upsertErr.message })
+    }
     return res.json({ inserted: entries.length })
   } catch (e: unknown) {
     return res.status(500).json({ error: e instanceof Error ? e.message : 'Internal server error' })
@@ -127,7 +138,7 @@ router.get('/summary', requirePermission('employees', 'view'), async (req: Reque
 
     const { data, error } = await supabase
       .from('timesheet')
-      .select('employee_id, status, hours, employees(id, full_name, position)')
+      .select('employee_id, status, hours_planned, hours_actual, employees(id, full_name, position)')
       .eq('branch_id', branchId)
       .gte('date', dateFrom)
       .lte('date', dateTo)
@@ -143,12 +154,14 @@ router.get('/summary', requirePermission('employees', 'view'), async (req: Reque
           full_name: row.employees?.full_name ?? '',
           position:  row.employees?.position ?? '',
           present: 0, absent: 0, late: 0, partial: 0, pending: 0,
-          total_hours: 0,
+          total_hours_planned: 0,
+          total_hours_actual:  0,
         }
       }
       const e = byEmployee[eid]
       e[row.status as string] = (e[row.status as string] ?? 0) + 1
-      if (row.hours) e.total_hours = parseFloat((e.total_hours + row.hours).toFixed(2))
+      if (row.hours_planned) e.total_hours_planned = parseFloat((e.total_hours_planned + row.hours_planned).toFixed(2))
+      if (row.hours_actual)  e.total_hours_actual  = parseFloat((e.total_hours_actual  + row.hours_actual).toFixed(2))
     }
 
     return res.json(Object.values(byEmployee))

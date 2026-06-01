@@ -1,6 +1,7 @@
 import cron from 'node-cron'
 import { supabase } from '../config/supabase'
 import { sendWhatsApp } from '../utils/sendWhatsApp'
+import { fireAutomationRules } from '../utils/fireAutomationRules'
 
 export function startSubscriptionCron(): void {
   // Daily at 09:00 — notify clients whose subscription expires in 3 days
@@ -12,7 +13,7 @@ export function startSubscriptionCron(): void {
 
       const { data: expiring, error } = await supabase
         .from('subscriptions')
-        .select('id, name, date_end, client_id')
+        .select('id, name, date_end, client_id, branch_id')
         .eq('status', 'active')
         .eq('date_end', dateStr)
         .is('deleted_at', null)
@@ -40,6 +41,12 @@ export function startSubscriptionCron(): void {
           `Здравствуйте, ${client.full_name}! Ваш абонемент «${sub.name}» истекает ${dateLabel}. Не упустите момент продлить его! Ждём вас в Slimway.`
         )
       }
+      // Fire automation rules for each branch with expiring subscriptions
+      const branchIds = [...new Set((expiring ?? []).map(s => (s as any).branch_id as string).filter(Boolean))]
+      for (const bid of branchIds) {
+        await fireAutomationRules(bid, 'subscription_expiring')
+      }
+
       console.log(`[subscriptions cron] Sent ${expiring?.length ?? 0} expiry notifications`)
     } catch (e) {
       console.error('[subscriptions cron] error:', e)
