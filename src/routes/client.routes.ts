@@ -9,9 +9,25 @@ const router = Router()
 
 router.post('/auth', async (req: Request, res: Response) => {
   try {
-    const { phone, branch_id } = req.body
-    if (!phone || !branch_id) {
-      return res.status(400).json({ error: 'phone and branch_id required', code: 'VALIDATION_ERROR' })
+    const { phone } = req.body
+    if (!phone) {
+      return res.status(400).json({ error: 'phone required', code: 'VALIDATION_ERROR' })
+    }
+
+    const authHeader = req.headers.authorization ?? ''
+    const urlToken = authHeader.startsWith('Bearer ') ? authHeader.slice(7) : null
+    if (!urlToken) {
+      return res.status(400).json({ error: 'Portal token required', code: 'NO_TOKEN' })
+    }
+
+    const { data: tokenRow } = await supabase
+      .from('client_tokens')
+      .select('branch_id')
+      .eq('token', urlToken)
+      .maybeSingle()
+
+    if (!tokenRow?.branch_id) {
+      return res.status(404).json({ error: 'Invalid portal token', code: 'INVALID_TOKEN' })
     }
 
     const normalized = String(phone).replace(/\s+/g, '')
@@ -19,7 +35,7 @@ router.post('/auth', async (req: Request, res: Response) => {
     const { data: client, error } = await supabase
       .from('clients')
       .select('id, full_name, branch_id')
-      .eq('branch_id', branch_id)
+      .eq('branch_id', tokenRow.branch_id)
       .eq('is_deleted', false)
       .ilike('phone', `%${normalized.slice(-9)}%`)
       .single()
@@ -34,6 +50,7 @@ router.post('/auth', async (req: Request, res: Response) => {
     const { error: insertErr } = await supabase.from('client_tokens').insert({
       token,
       client_id: client.id,
+      branch_id: client.branch_id,
       expires_at: expiresAt,
     })
 
