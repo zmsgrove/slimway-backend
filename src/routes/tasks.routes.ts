@@ -40,7 +40,7 @@ router.get('/', async (req: Request, res: Response) => {
         .eq('branch_id', branchId ?? '')
         .maybeSingle()
 
-      const parts = [`created_by.eq.${userId}`]
+      const parts = [`created_by.eq.${userId}`, `assigned_to.eq.${userId}`]
       if (emp?.id) parts.push(`assigned_to.eq.${emp.id}`)
       parts.push(`observer_ids.cs.["${userId}"]`)
       query = query.or(parts.join(','))

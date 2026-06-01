@@ -113,6 +113,20 @@ router.post('/', requirePermission('leads', 'create'), async (req: Request, res:
     if (rules && rules.length > 0) {
       for (const rule of rules) {
         const title = (rule.task_title_template as string).replace('{{lead_name}}', full_name)
+
+        // Если задана роль для назначения — найти profile_id сотрудника с этой ролью в филиале
+        let assignedTo: string | null = null
+        if (rule.assign_to_role) {
+          const { data: assigneeProfile } = await supabase
+            .from('profiles')
+            .select('id')
+            .eq('branch_id', branchId)
+            .eq('role', rule.assign_to_role as string)
+            .limit(1)
+            .maybeSingle()
+          if (assigneeProfile) assignedTo = assigneeProfile.id as string
+        }
+
         const { data: task } = await supabase
           .from('tasks')
           .insert({
@@ -120,11 +134,12 @@ router.post('/', requirePermission('leads', 'create'), async (req: Request, res:
             title,
             priority:     (rule.task_priority as string) || 'medium',
             status:       'new',
-            assigned_to:  null,
+            assigned_to:  assignedTo,
             observer_ids: [],
             related_type: 'lead',
             related_id:   data.id,
             created_by:   req.user!.id,
+            is_auto:      true,
           })
           .select('id')
           .single()

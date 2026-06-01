@@ -46,6 +46,7 @@ import { startSubscriptionCron } from './crons/subscriptions.cron'
 import { startLeadsCron } from './crons/leads.cron'
 import { startTasksCron } from './crons/tasks.cron'
 import apiKeysRouter from './routes/api-keys.routes'
+import saleRouter from './routes/sale.routes'
 import swaggerUi from 'swagger-ui-express'
 import { swaggerSpec } from './config/swagger'
 
@@ -211,6 +212,9 @@ app.use('/api/v1/timesheet', timesheetRouter)
 
 // API Keys
 app.use('/api/v1/api-keys', apiKeysRouter)
+
+// Sale (cart checkout)
+app.use('/api/v1/sale', saleRouter)
 
 // 404
 app.use((_req, res) => {

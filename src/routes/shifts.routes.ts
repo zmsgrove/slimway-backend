@@ -122,6 +122,36 @@ router.patch('/:id', requirePermission('shifts', 'edit'), async (req: Request, r
   }
 })
 
+// DELETE /shifts/bulk — удалить все смены сотрудника за период
+router.delete('/bulk', requirePermission('shifts', 'manage'), async (req: Request, res: Response) => {
+  try {
+    const branchId = await resolveBranchId(req.user!)
+    if (!branchId) return res.status(400).json({ error: 'No branch found', code: 'NO_BRANCH' })
+
+    const { employee_id, date_from, date_end } = req.body
+    if (!employee_id || !date_from || !date_end) {
+      return res.status(400).json({ error: 'employee_id, date_from, date_end required', code: 'VALIDATION_ERROR' })
+    }
+
+    const { error } = await supabase
+      .from('shifts')
+      .delete()
+      .eq('branch_id', branchId)
+      .eq('employee_id', employee_id as string)
+      .gte('date', date_from as string)
+      .lte('date', date_end as string)
+
+    if (error) {
+      console.error('[DELETE /shifts/bulk]', error)
+      return res.status(500).json({ error: error.message })
+    }
+    return res.status(204).send()
+  } catch (e: unknown) {
+    const msg = e instanceof Error ? e.message : 'Internal server error'
+    return res.status(500).json({ error: msg })
+  }
+})
+
 // DELETE /shifts/:id
 router.delete('/:id', requirePermission('shifts', 'delete'), async (req: Request, res: Response) => {
   try {

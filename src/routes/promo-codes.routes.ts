@@ -49,7 +49,7 @@ router.post('/', requirePermission('subscriptions', 'edit'), async (req: Request
   try {
     const branchId = await resolveBranchId(req.user!)
     if (!branchId) return res.status(400).json({ error: 'No branch' })
-    const { code, discount_type, discount_value, max_uses, expires_at } = req.body
+    const { code, discount_type, discount_value, max_uses, expires_at, max_uses_per_client } = req.body
     if (!code?.trim()) return res.status(400).json({ error: 'code required' })
     if (!discount_type || !['fixed', 'percent'].includes(discount_type)) return res.status(400).json({ error: 'discount_type must be fixed or percent' })
     if (discount_value === undefined || discount_value < 0) return res.status(400).json({ error: 'discount_value required' })
@@ -63,6 +63,7 @@ router.post('/', requirePermission('subscriptions', 'edit'), async (req: Request
         discount_value,
         max_uses: max_uses ?? null,
         expires_at: expires_at ?? null,
+        max_uses_per_client: max_uses_per_client ?? null,
       })
       .select()
       .single()
@@ -80,13 +81,14 @@ router.post('/', requirePermission('subscriptions', 'edit'), async (req: Request
 // PATCH /promo-codes/:id
 router.patch('/:id', requirePermission('subscriptions', 'edit'), async (req: Request, res: Response) => {
   try {
-    const { discount_type, discount_value, max_uses, expires_at, is_active } = req.body
+    const { discount_type, discount_value, max_uses, expires_at, is_active, max_uses_per_client } = req.body
     const patch: Record<string, unknown> = {}
-    if (discount_type  !== undefined) patch.discount_type  = discount_type
-    if (discount_value !== undefined) patch.discount_value = discount_value
-    if (max_uses       !== undefined) patch.max_uses       = max_uses
-    if (expires_at     !== undefined) patch.expires_at     = expires_at
-    if (is_active      !== undefined) patch.is_active      = is_active
+    if (discount_type       !== undefined) patch.discount_type       = discount_type
+    if (discount_value      !== undefined) patch.discount_value      = discount_value
+    if (max_uses            !== undefined) patch.max_uses            = max_uses
+    if (expires_at          !== undefined) patch.expires_at          = expires_at
+    if (is_active           !== undefined) patch.is_active           = is_active
+    if (max_uses_per_client !== undefined) patch.max_uses_per_client = max_uses_per_client
 
     const { data, error } = await supabase
       .from('promo_codes')

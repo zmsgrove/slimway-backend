@@ -296,19 +296,25 @@ router.patch('/:id/role', async (req: Request, res: Response) => {
 
     if (empErr || !emp) return res.status(404).json({ error: 'Employee not found', code: 'NOT_FOUND' })
 
-    const newBranchId = branch_id || null
+    const newBranchId = (branch_id && branch_id !== 'null') ? branch_id : null
 
     // Обновляем auth metadata
     if (emp.profile_id) {
-      await supabase.auth.admin.updateUserById(emp.profile_id, {
+      const { error: authErr } = await supabase.auth.admin.updateUserById(emp.profile_id as string, {
         app_metadata: { role, branch_id: newBranchId },
       })
+      if (authErr) {
+        console.error('[PATCH /employees/:id/role] auth.admin.updateUserById error:', authErr)
+      }
 
       // Обновляем профиль
-      await supabase.from('profiles').update({
+      const { error: profileErr } = await supabase.from('profiles').update({
         role,
         branch_id: newBranchId,
-      }).eq('id', emp.profile_id)
+      }).eq('id', emp.profile_id as string)
+      if (profileErr) {
+        console.error('[PATCH /employees/:id/role] profiles.update error:', profileErr)
+      }
     }
 
     // Обновляем запись сотрудника
@@ -319,10 +325,14 @@ router.patch('/:id/role', async (req: Request, res: Response) => {
       .select()
       .single()
 
-    if (error) return res.status(500).json({ error: error.message })
+    if (error) {
+      console.error('[PATCH /employees/:id/role] employees.update error:', error)
+      return res.status(500).json({ error: error.message })
+    }
     return res.json(data)
   } catch (e: unknown) {
     const msg = e instanceof Error ? e.message : 'Internal server error'
+    console.error('[PATCH /employees/:id/role] unexpected error:', e)
     return res.status(500).json({ error: msg })
   }
 })

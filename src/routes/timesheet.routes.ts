@@ -17,7 +17,7 @@ router.get('/', requirePermission('employees', 'view'), async (req: Request, res
     }
 
     const { data, error } = await supabase
-      .from('timesheet_entries')
+      .from('timesheet')
       .select('*, employees(id, full_name, position)')
       .eq('branch_id', branchId)
       .gte('date', `${month}-01`)
@@ -94,7 +94,7 @@ router.post('/generate', requirePermission('employees', 'edit'), async (req: Req
     })
 
     const { error: upsertErr } = await supabase
-      .from('timesheet_entries')
+      .from('timesheet')
       .upsert(entries, { onConflict: 'branch_id,employee_id,date', ignoreDuplicates: false })
 
     if (upsertErr) return res.status(500).json({ error: upsertErr.message })
@@ -116,7 +116,7 @@ router.get('/summary', requirePermission('employees', 'view'), async (req: Reque
     }
 
     const { data, error } = await supabase
-      .from('timesheet_entries')
+      .from('timesheet')
       .select('employee_id, status, hours, employees(id, full_name, position)')
       .eq('branch_id', branchId)
       .gte('date', `${month}-01`)
