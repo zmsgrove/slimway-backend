@@ -134,13 +134,15 @@ router.post('/', requirePermission('subscriptions', 'create'), async (req: Reque
 router.patch('/:id', requirePermission('subscriptions', 'edit'), async (req: Request, res: Response) => {
   try {
     const { id } = req.params
-    const { status, date_end, slot_1_sessions_left, slot_2_sessions_left, cancellation_reason } = req.body
+    const { status, date_end, slot_1_sessions_left, slot_2_sessions_left, slot_3_sessions_left, slot_4_sessions_left, cancellation_reason } = req.body
 
     const patch: Record<string, unknown> = {}
     if (status               !== undefined) patch.status               = status
     if (date_end             !== undefined) patch.date_end             = date_end
     if (slot_1_sessions_left !== undefined) patch.slot_1_sessions_left = slot_1_sessions_left
     if (slot_2_sessions_left !== undefined) patch.slot_2_sessions_left = slot_2_sessions_left
+    if (slot_3_sessions_left !== undefined) patch.slot_3_sessions_left = slot_3_sessions_left
+    if (slot_4_sessions_left !== undefined) patch.slot_4_sessions_left = slot_4_sessions_left
     if (cancellation_reason  !== undefined) patch.cancellation_reason  = cancellation_reason
 
     const { data, error } = await supabase

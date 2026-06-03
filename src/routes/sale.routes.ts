@@ -121,6 +121,22 @@ router.post('/checkout', requirePermission('subscriptions', 'create'), async (re
       const tpl = templates[item.template_id!]
       if (!tpl) continue
 
+      // Тестовый абонемент: каждый клиент может купить только один раз
+      if (tpl.is_trial) {
+        const { data: existingTrial } = await supabase
+          .from('subscriptions')
+          .select('id')
+          .eq('client_id', client_id)
+          .eq('is_trial', true)
+          .is('deleted_at', null)
+          .limit(1)
+          .maybeSingle()
+
+        if (existingTrial) {
+          return res.status(400).json({ error: 'Клиент уже проходил тестовое занятие', code: 'TRIAL_ALREADY_USED' })
+        }
+      }
+
       const payload: Record<string, unknown> = {
         client_id, branch_id: branchId,
         name: tpl.name,
@@ -131,6 +147,7 @@ router.post('/checkout', requirePermission('subscriptions', 'create'), async (re
         date_start: today,
         status: 'active',
         price: tpl.price ?? null,
+        is_trial: tpl.is_trial ?? false,
       }
       if (tpl.validity_days) {
         const end = new Date()
@@ -142,6 +159,18 @@ router.post('/checkout', requirePermission('subscriptions', 'create'), async (re
         payload.slot_2_duration_min = tpl.slot_2_duration_min ?? null
         payload.slot_2_sessions_total = tpl.slot_2_sessions_total ?? null
         payload.slot_2_sessions_left = tpl.slot_2_sessions_total ?? null
+      }
+      if (tpl.slot_3_type) {
+        payload.slot_3_type = tpl.slot_3_type
+        payload.slot_3_duration_min = tpl.slot_3_duration_min ?? null
+        payload.slot_3_sessions_total = tpl.slot_3_sessions_total ?? null
+        payload.slot_3_sessions_left = tpl.slot_3_sessions_total ?? null
+      }
+      if (tpl.slot_4_type) {
+        payload.slot_4_type = tpl.slot_4_type
+        payload.slot_4_duration_min = tpl.slot_4_duration_min ?? null
+        payload.slot_4_sessions_total = tpl.slot_4_sessions_total ?? null
+        payload.slot_4_sessions_left = tpl.slot_4_sessions_total ?? null
       }
 
       const { data: sub } = await supabase.from('subscriptions').insert(payload).select('id, name').single()

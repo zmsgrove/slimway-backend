@@ -298,7 +298,7 @@ router.delete('/bookings/:id', requireClientAuth, async (req: Request, res: Resp
 
     const { data: booking } = await supabase
       .from('bookings_v2')
-      .select('*, subscriptions(slot_1_sessions_left, slot_2_sessions_left, slot_2_type), slot_1_schedule_slot_id')
+      .select('*, subscriptions(slot_1_sessions_left, slot_2_sessions_left, slot_2_type, slot_3_sessions_left, slot_3_type, slot_4_sessions_left, slot_4_type), slot_1_schedule_slot_id, slot_2_schedule_slot_id, slot_3_schedule_slot_id, slot_4_schedule_slot_id')
       .eq('id', id)
       .eq('client_id', client_id)
       .single()
@@ -317,12 +317,18 @@ router.delete('/bookings/:id', requireClientAuth, async (req: Request, res: Resp
     await supabase.from('schedule_slots').update({ status: 'free', booking_id: null }).eq('booking_id', id)
 
     if (booking.subscription_id) {
-      const sub = booking.subscriptions as { slot_1_sessions_left: number; slot_2_sessions_left: number | null; slot_2_type: string | null } | null
+      const sub = booking.subscriptions as {
+        slot_1_sessions_left: number
+        slot_2_sessions_left: number | null; slot_2_type: string | null
+        slot_3_sessions_left: number | null; slot_3_type: string | null
+        slot_4_sessions_left: number | null; slot_4_type: string | null
+      } | null
       if (sub) {
-        await supabase.from('subscriptions').update({ slot_1_sessions_left: sub.slot_1_sessions_left + 1 }).eq('id', booking.subscription_id)
-        if (sub.slot_2_type) {
-          await supabase.from('subscriptions').update({ slot_2_sessions_left: (sub.slot_2_sessions_left ?? 0) + 1 }).eq('id', booking.subscription_id)
-        }
+        const patch: Record<string, number> = { slot_1_sessions_left: sub.slot_1_sessions_left + 1 }
+        if (sub.slot_2_type && booking.slot_2_schedule_slot_id) patch.slot_2_sessions_left = (sub.slot_2_sessions_left ?? 0) + 1
+        if (sub.slot_3_type && booking.slot_3_schedule_slot_id) patch.slot_3_sessions_left = (sub.slot_3_sessions_left ?? 0) + 1
+        if (sub.slot_4_type && booking.slot_4_schedule_slot_id) patch.slot_4_sessions_left = (sub.slot_4_sessions_left ?? 0) + 1
+        await supabase.from('subscriptions').update(patch).eq('id', booking.subscription_id)
       }
     }
 

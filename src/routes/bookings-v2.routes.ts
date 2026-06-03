@@ -8,7 +8,159 @@ import { logAction } from '../utils/logAction'
 
 const router = Router()
 
-// POST /bookings-v2
+// ─── Helpers ──────────────────────────────────────────────────────────────────
+
+type SubRow = {
+  slot_1_sessions_left: number
+  slot_2_sessions_left: number | null
+  slot_2_type: string | null
+  slot_3_sessions_left: number | null
+  slot_3_type: string | null
+  slot_4_sessions_left: number | null
+  slot_4_type: string | null
+}
+
+type BookingRow = {
+  subscription_id: string
+  slot_2_schedule_slot_id: string | null
+  slot_3_schedule_slot_id: string | null
+  slot_4_schedule_slot_id: string | null
+}
+
+function buildSessionRestorePatch(sub: SubRow, booking: BookingRow): Record<string, number> {
+  const patch: Record<string, number> = {
+    slot_1_sessions_left: (sub.slot_1_sessions_left ?? 0) + 1,
+  }
+  if (booking.slot_2_schedule_slot_id && sub.slot_2_type && sub.slot_2_sessions_left !== null) {
+    patch.slot_2_sessions_left = (sub.slot_2_sessions_left ?? 0) + 1
+  }
+  if (booking.slot_3_schedule_slot_id && sub.slot_3_type && sub.slot_3_sessions_left !== null) {
+    patch.slot_3_sessions_left = (sub.slot_3_sessions_left ?? 0) + 1
+  }
+  if (booking.slot_4_schedule_slot_id && sub.slot_4_type && sub.slot_4_sessions_left !== null) {
+    patch.slot_4_sessions_left = (sub.slot_4_sessions_left ?? 0) + 1
+  }
+  return patch
+}
+
+// ─── POST /bookings-v2/trial — trial subscription booking (all slots at once) ──
+
+router.post('/trial', requirePermission('bookings', 'create'), async (req: Request, res: Response) => {
+  try {
+    const branchId = await resolveBranchId(req.user!)
+    const { subscription_id, date, time_start } = req.body
+
+    if (!subscription_id || !date || !time_start) {
+      return res.status(400).json({ error: 'subscription_id, date, time_start required', code: 'VALIDATION_ERROR' })
+    }
+
+    const { data: sub, error: subErr } = await supabase
+      .from('subscriptions')
+      .select('*')
+      .eq('id', subscription_id)
+      .single()
+
+    if (subErr || !sub) return res.status(404).json({ error: 'Subscription not found', code: 'NOT_FOUND' })
+    if (!sub.is_trial) return res.status(400).json({ error: 'Not a trial subscription', code: 'NOT_TRIAL' })
+    if (sub.status !== 'active') return res.status(400).json({ error: 'Subscription is not active', code: 'SUB_INACTIVE' })
+    if (sub.slot_1_sessions_left <= 0) return res.status(400).json({ error: 'No sessions left', code: 'NO_SESSIONS' })
+
+    const effectiveBranchId = branchId ?? sub.branch_id
+
+    // Define active slots
+    const activeSlots: Array<{ field: string; type: string; sessions_left: number | null }> = [
+      { field: 'slot_1', type: sub.slot_1_type, sessions_left: sub.slot_1_sessions_left },
+    ]
+    if (sub.slot_2_type) activeSlots.push({ field: 'slot_2', type: sub.slot_2_type, sessions_left: sub.slot_2_sessions_left })
+    if (sub.slot_3_type) activeSlots.push({ field: 'slot_3', type: sub.slot_3_type, sessions_left: sub.slot_3_sessions_left })
+    if (sub.slot_4_type) activeSlots.push({ field: 'slot_4', type: sub.slot_4_type, sessions_left: sub.slot_4_sessions_left })
+
+    // Find a free schedule_slot for each slot type at the given date+time_start
+    const slotMap: Record<string, string> = {} // field → schedule_slot_id
+
+    for (const s of activeSlots) {
+      const { data: devices } = await supabase
+        .from('devices')
+        .select('id')
+        .eq('branch_id', effectiveBranchId)
+        .eq('type', s.type)
+        .eq('status', 'active')
+
+      const deviceIds = (devices ?? []).map((d: { id: string }) => d.id)
+      if (deviceIds.length === 0) {
+        return res.status(409).json({
+          error: `Нет активного тренажёра типа ${s.type}`,
+          code: 'NO_DEVICE',
+          slot_type: s.type,
+        })
+      }
+
+      const { data: freeSlot } = await supabase
+        .from('schedule_slots')
+        .select('id')
+        .eq('date', date)
+        .eq('time_start', time_start)
+        .eq('status', 'free')
+        .in('device_id', deviceIds)
+        .limit(1)
+        .maybeSingle()
+
+      if (!freeSlot) {
+        return res.status(409).json({
+          error: `Тренажёр ${s.type} занят в ${time_start}. Выберите другое время.`,
+          code: 'SLOT_BUSY',
+          slot_type: s.type,
+        })
+      }
+
+      slotMap[s.field] = freeSlot.id
+    }
+
+    // Create single booking with all slot IDs
+    const { data: booking, error: bookErr } = await supabase
+      .from('bookings_v2')
+      .insert({
+        client_id:                 sub.client_id,
+        subscription_id,
+        branch_id:                 effectiveBranchId,
+        date,
+        slot_1_schedule_slot_id:   slotMap['slot_1'],
+        slot_2_schedule_slot_id:   slotMap['slot_2'] ?? null,
+        slot_3_schedule_slot_id:   slotMap['slot_3'] ?? null,
+        slot_4_schedule_slot_id:   slotMap['slot_4'] ?? null,
+        created_by:                req.user!.id,
+        status:                    'confirmed',
+      })
+      .select()
+      .single()
+
+    if (bookErr || !booking) {
+      return res.status(500).json({ error: bookErr?.message ?? 'Booking failed', code: bookErr?.code })
+    }
+
+    // Mark all slots as booked
+    await Promise.all(
+      Object.values(slotMap).map(slotId =>
+        supabase.from('schedule_slots').update({ status: 'booked', booking_id: booking.id }).eq('id', slotId)
+      )
+    )
+
+    // Deduct sessions from all active slots
+    const sessionPatch: Record<string, number> = {}
+    if (slotMap['slot_1']) sessionPatch.slot_1_sessions_left = Math.max(0, (sub.slot_1_sessions_left ?? 1) - 1)
+    if (slotMap['slot_2'] && sub.slot_2_sessions_left !== null) sessionPatch.slot_2_sessions_left = Math.max(0, (sub.slot_2_sessions_left ?? 1) - 1)
+    if (slotMap['slot_3'] && sub.slot_3_sessions_left !== null) sessionPatch.slot_3_sessions_left = Math.max(0, (sub.slot_3_sessions_left ?? 1) - 1)
+    if (slotMap['slot_4'] && sub.slot_4_sessions_left !== null) sessionPatch.slot_4_sessions_left = Math.max(0, (sub.slot_4_sessions_left ?? 1) - 1)
+    await supabase.from('subscriptions').update(sessionPatch).eq('id', subscription_id)
+
+    return res.status(201).json(booking)
+  } catch (e: unknown) {
+    return res.status(500).json({ error: e instanceof Error ? e.message : 'Internal server error' })
+  }
+})
+
+// ─── POST /bookings-v2 — regular booking ──────────────────────────────────────
+
 router.post('/', requirePermission('bookings', 'create'), async (req: Request, res: Response) => {
   const [branchId, created_by] = [await resolveBranchId(req.user!), req.user!.id]
   const { client_id, subscription_id, slot_1_schedule_slot_id, date } = req.body
@@ -29,6 +181,7 @@ router.post('/', requirePermission('bookings', 'create'), async (req: Request, r
   if (subErr || !sub) return res.status(404).json({ error: 'Subscription not found', code: 'NOT_FOUND' })
   if (sub.status !== 'active') return res.status(400).json({ error: 'Subscription is not active', code: 'SUB_INACTIVE' })
   if (sub.slot_1_sessions_left <= 0) return res.status(400).json({ error: 'No sessions left on slot 1', code: 'NO_SESSIONS' })
+  if (sub.is_trial) return res.status(400).json({ error: 'Use /trial endpoint for trial subscriptions', code: 'USE_TRIAL_ENDPOINT' })
 
   const { data: slot1, error: slot1Err } = await supabase
     .from('schedule_slots')
@@ -133,7 +286,8 @@ router.post('/', requirePermission('bookings', 'create'), async (req: Request, r
   return res.status(201).json(booking)
 })
 
-// GET /bookings-v2/pending — список pending броней филиала
+// ─── GET /bookings-v2/pending ─────────────────────────────────────────────────
+
 router.get('/pending', requirePermission('bookings', 'confirm'), async (req: Request, res: Response) => {
   try {
     const branchId = await resolveBranchId(req.user!)
@@ -153,7 +307,8 @@ router.get('/pending', requirePermission('bookings', 'confirm'), async (req: Req
   }
 })
 
-// PATCH /bookings-v2/:id/confirm
+// ─── PATCH /bookings-v2/:id/confirm ──────────────────────────────────────────
+
 router.patch('/:id/confirm', requirePermission('bookings', 'confirm'), async (req: Request, res: Response) => {
   try {
     const { id } = req.params
@@ -173,14 +328,15 @@ router.patch('/:id/confirm', requirePermission('bookings', 'confirm'), async (re
   }
 })
 
-// PATCH /bookings-v2/:id/reject
+// ─── PATCH /bookings-v2/:id/reject ───────────────────────────────────────────
+
 router.patch('/:id/reject', requirePermission('bookings', 'confirm'), async (req: Request, res: Response) => {
   try {
     const { id } = req.params
 
     const { data: booking } = await supabase
       .from('bookings_v2')
-      .select('subscription_id, slot_1_schedule_slot_id, slot_2_schedule_slot_id')
+      .select('subscription_id, slot_1_schedule_slot_id, slot_2_schedule_slot_id, slot_3_schedule_slot_id, slot_4_schedule_slot_id')
       .eq('id', id)
       .single()
 
@@ -191,14 +347,12 @@ router.patch('/:id/reject', requirePermission('bookings', 'confirm'), async (req
     if (booking.subscription_id) {
       const { data: sub } = await supabase
         .from('subscriptions')
-        .select('slot_1_sessions_left, slot_2_sessions_left, slot_2_type')
+        .select('slot_1_sessions_left, slot_2_sessions_left, slot_2_type, slot_3_sessions_left, slot_3_type, slot_4_sessions_left, slot_4_type')
         .eq('id', booking.subscription_id)
         .single()
+
       if (sub) {
-        const patch: Record<string, number> = { slot_1_sessions_left: (sub.slot_1_sessions_left ?? 0) + 1 }
-        if (booking.slot_2_schedule_slot_id && sub.slot_2_type && sub.slot_2_sessions_left !== null) {
-          patch.slot_2_sessions_left = (sub.slot_2_sessions_left ?? 0) + 1
-        }
+        const patch = buildSessionRestorePatch(sub as SubRow, booking as BookingRow)
         await supabase.from('subscriptions').update(patch).eq('id', booking.subscription_id)
       }
     }
@@ -211,7 +365,8 @@ router.patch('/:id/reject', requirePermission('bookings', 'confirm'), async (req
   }
 })
 
-// GET /bookings-v2/:id
+// ─── GET /bookings-v2/:id ─────────────────────────────────────────────────────
+
 router.get('/:id', requirePermission('bookings', 'view'), async (req: Request, res: Response) => {
   try {
     const { id } = req.params
@@ -232,22 +387,31 @@ router.get('/:id', requirePermission('bookings', 'view'), async (req: Request, r
 
     let slot2 = null
     if (booking.slot_2_schedule_slot_id) {
-      const { data } = await supabase
-        .from('schedule_slots')
-        .select('*, devices(*)')
-        .eq('id', booking.slot_2_schedule_slot_id)
-        .single()
+      const { data } = await supabase.from('schedule_slots').select('*, devices(*)').eq('id', booking.slot_2_schedule_slot_id).single()
       slot2 = data
     }
 
-    return res.json({ booking, client, subscription: sub, slot_1: slot1, slot_2: slot2 })
+    let slot3 = null
+    if (booking.slot_3_schedule_slot_id) {
+      const { data } = await supabase.from('schedule_slots').select('*, devices(*)').eq('id', booking.slot_3_schedule_slot_id).single()
+      slot3 = data
+    }
+
+    let slot4 = null
+    if (booking.slot_4_schedule_slot_id) {
+      const { data } = await supabase.from('schedule_slots').select('*, devices(*)').eq('id', booking.slot_4_schedule_slot_id).single()
+      slot4 = data
+    }
+
+    return res.json({ booking, client, subscription: sub, slot_1: slot1, slot_2: slot2, slot_3: slot3, slot_4: slot4 })
   } catch (e: unknown) {
     const msg = e instanceof Error ? e.message : 'Internal server error'
     return res.status(500).json({ error: msg })
   }
 })
 
-// DELETE /bookings-v2/:id — отменить бронь с проверкой времени
+// ─── DELETE /bookings-v2/:id ──────────────────────────────────────────────────
+
 router.delete('/:id', async (req: Request, res: Response) => {
   const { id } = req.params
   const role = req.user!.role as Role
@@ -260,7 +424,6 @@ router.delete('/:id', async (req: Request, res: Response) => {
 
   if (!booking) return res.status(404).json({ error: 'Booking not found', code: 'NOT_FOUND' })
 
-  // Определяем тип отмены по времени
   const slot = (booking as Record<string, unknown>).schedule_slots as { date: string; time_start: string } | null
   let cancelAction: 'cancel_early' | 'cancel_late' = 'cancel_early'
   if (slot) {
@@ -271,31 +434,25 @@ router.delete('/:id', async (req: Request, res: Response) => {
     }
   }
 
-  // Загружаем overrides для этой роли
   const { data: overrides } = await supabase
     .from('permission_overrides')
     .select('*')
     .eq('role', role)
 
   if (!can(role, 'bookings', cancelAction, (overrides ?? []) as PermissionOverride[])) {
-    return res.status(403).json({ error: 'Cannot cancel less than 24h before slot', code: 'TOO_LATE' })
+    return res.status(403).json({ error: 'Бронь нельзя отменить менее чем за 24 часа до начала', code: 'TOO_LATE' })
   }
 
   await supabase.from('schedule_slots').update({ status: 'free', booking_id: null }).eq('booking_id', id)
 
   const { data: sub } = await supabase
     .from('subscriptions')
-    .select('slot_1_sessions_left, slot_2_sessions_left, slot_2_type')
+    .select('slot_1_sessions_left, slot_2_sessions_left, slot_2_type, slot_3_sessions_left, slot_3_type, slot_4_sessions_left, slot_4_type')
     .eq('id', booking.subscription_id)
     .single()
 
   if (sub) {
-    const patch: Record<string, number> = {
-      slot_1_sessions_left: (sub.slot_1_sessions_left ?? 0) + 1,
-    }
-    if (booking.slot_2_schedule_slot_id && sub.slot_2_type && sub.slot_2_sessions_left !== null) {
-      patch.slot_2_sessions_left = (sub.slot_2_sessions_left ?? 0) + 1
-    }
+    const patch = buildSessionRestorePatch(sub as SubRow, booking as BookingRow)
     await supabase.from('subscriptions').update(patch).eq('id', booking.subscription_id)
   }
 
@@ -315,7 +472,8 @@ router.delete('/:id', async (req: Request, res: Response) => {
   return res.status(204).send()
 })
 
-// PATCH /bookings-v2/:id — отметить посещаемость
+// ─── PATCH /bookings-v2/:id — attendance ─────────────────────────────────────
+
 router.patch('/:id', requirePermission('bookings', 'view'), async (req: Request, res: Response) => {
   try {
     const { id } = req.params
@@ -339,7 +497,8 @@ router.patch('/:id', requirePermission('bookings', 'view'), async (req: Request,
   }
 })
 
-// PATCH /bookings-v2/:id/reschedule
+// ─── PATCH /bookings-v2/:id/reschedule ───────────────────────────────────────
+
 router.patch('/:id/reschedule', requirePermission('bookings', 'create'), async (req: Request, res: Response) => {
   const { id } = req.params
   const { new_slot_1_id, new_slot_2_id } = req.body
