@@ -148,6 +148,7 @@ router.post('/checkout', requirePermission('subscriptions', 'create'), async (re
         status: 'active',
         price: tpl.price ?? null,
         is_trial: tpl.is_trial ?? false,
+        finish_slot: tpl.finish_slot ?? null,
       }
       if (tpl.validity_days) {
         const end = new Date()
