@@ -434,13 +434,36 @@ router.delete('/:id', async (req: Request, res: Response) => {
     }
   }
 
-  const { data: overrides } = await supabase
-    .from('permission_overrides')
-    .select('*')
-    .eq('role', role)
+  // Developer bypasses all 24h checks unconditionally
+  if (role !== 'developer') {
+    if (cancelAction === 'cancel_late') {
+      // Check branch setting first — if enabled, all roles may cancel late
+      const { data: bs } = await supabase
+        .from('branch_settings')
+        .select('allow_cancel_within_24h')
+        .eq('branch_id', booking.branch_id as string)
+        .maybeSingle()
 
-  if (!can(role, 'bookings', cancelAction, (overrides ?? []) as PermissionOverride[])) {
-    return res.status(403).json({ error: 'Бронь нельзя отменить менее чем за 24 часа до начала', code: 'TOO_LATE' })
+      if (!bs?.allow_cancel_within_24h) {
+        const { data: overrides } = await supabase
+          .from('permission_overrides')
+          .select('*')
+          .eq('role', role)
+
+        if (!can(role, 'bookings', 'cancel_late', (overrides ?? []) as PermissionOverride[])) {
+          return res.status(403).json({ error: 'Бронь нельзя отменить менее чем за 24 часа до начала', code: 'TOO_LATE' })
+        }
+      }
+    } else {
+      const { data: overrides } = await supabase
+        .from('permission_overrides')
+        .select('*')
+        .eq('role', role)
+
+      if (!can(role, 'bookings', 'cancel_early', (overrides ?? []) as PermissionOverride[])) {
+        return res.status(403).json({ error: 'Нет прав на отмену брони', code: 'FORBIDDEN' })
+      }
+    }
   }
 
   await supabase.from('schedule_slots').update({ status: 'free', booking_id: null }).eq('booking_id', id)

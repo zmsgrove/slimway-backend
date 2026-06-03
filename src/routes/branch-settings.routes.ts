@@ -9,6 +9,7 @@ const ALLOWED = [
   'work_time_start', 'work_time_end', 'timezone', 'currency',
   'contact_phone', 'contact_email', 'website', 'address',
   'booking_interval_min', 'max_bookings_per_day',
+  'allow_cancel_within_24h',
 ]
 
 // GET /branch-settings — get settings for current branch (auto-create if missing)
