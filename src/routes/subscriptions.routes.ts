@@ -59,7 +59,9 @@ router.post('/', requirePermission('subscriptions', 'create'), async (req: Reque
       client_id, name,
       slot_1_type, slot_1_duration_min, slot_1_sessions_total,
       slot_2_type, slot_2_duration_min, slot_2_sessions_total,
-      date_start, date_end, price,
+      slot_3_type, slot_3_duration_min, slot_3_sessions_total,
+      slot_4_type, slot_4_duration_min, slot_4_sessions_total,
+      date_start, date_end, price, is_trial,
     } = req.body
 
     if (!client_id || !name || !slot_1_type || !slot_1_duration_min || !slot_1_sessions_total || !date_start) {
@@ -69,6 +71,22 @@ router.post('/', requirePermission('subscriptions', 'create'), async (req: Reque
       })
     }
 
+    // Тестовый абонемент: каждый клиент может купить только один раз
+    if (is_trial) {
+      const { data: existingTrial } = await supabase
+        .from('subscriptions')
+        .select('id')
+        .eq('client_id', client_id)
+        .eq('is_trial', true)
+        .is('deleted_at', null)
+        .limit(1)
+        .maybeSingle()
+
+      if (existingTrial) {
+        return res.status(400).json({ error: 'Клиент уже использовал тестовый абонемент', code: 'TRIAL_ALREADY_USED' })
+      }
+    }
+
     const payload: Record<string, unknown> = {
       client_id, branch_id: branchId, name,
       slot_1_type, slot_1_duration_min,
@@ -76,6 +94,7 @@ router.post('/', requirePermission('subscriptions', 'create'), async (req: Reque
       date_start, date_end: date_end ?? null,
       price: price ?? null,
       status: 'active',
+      is_trial: is_trial ?? false,
     }
 
     if (slot_2_type) {
@@ -83,6 +102,18 @@ router.post('/', requirePermission('subscriptions', 'create'), async (req: Reque
       payload.slot_2_duration_min = slot_2_duration_min ?? null
       payload.slot_2_sessions_total = slot_2_sessions_total ?? null
       payload.slot_2_sessions_left = slot_2_sessions_total ?? null
+    }
+    if (slot_3_type) {
+      payload.slot_3_type = slot_3_type
+      payload.slot_3_duration_min = slot_3_duration_min ?? null
+      payload.slot_3_sessions_total = slot_3_sessions_total ?? null
+      payload.slot_3_sessions_left = slot_3_sessions_total ?? null
+    }
+    if (slot_4_type) {
+      payload.slot_4_type = slot_4_type
+      payload.slot_4_duration_min = slot_4_duration_min ?? null
+      payload.slot_4_sessions_total = slot_4_sessions_total ?? null
+      payload.slot_4_sessions_left = slot_4_sessions_total ?? null
     }
 
     const { data, error } = await supabase

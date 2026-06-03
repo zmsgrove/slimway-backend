@@ -127,11 +127,36 @@ router.get('/bookings', requireClientAuth, async (req: Request, res: Response) =
 
 router.get('/schedule', requireClientAuth, async (req: Request, res: Response) => {
   try {
-    const { branch_id } = req.client!
+    const { id: client_id, branch_id } = req.client!
     const { date } = req.query
     if (!date) return res.status(400).json({ error: 'date required', code: 'VALIDATION_ERROR' })
 
-    const { data, error } = await supabase
+    // Получаем активный абонемент клиента для фильтрации по типу тренажёра
+    const { data: activeSub } = await supabase
+      .from('subscriptions')
+      .select('slot_1_type')
+      .eq('client_id', client_id)
+      .eq('status', 'active')
+      .is('deleted_at', null)
+      .limit(1)
+      .maybeSingle()
+
+    // Получаем устройства типа group=A и нужного типа
+    let devicesQuery = supabase
+      .from('devices')
+      .select('id')
+      .eq('branch_id', branch_id)
+      .eq('device_group', 'A')
+      .eq('status', 'active')
+
+    if (activeSub?.slot_1_type) {
+      devicesQuery = devicesQuery.eq('type', activeSub.slot_1_type.toLowerCase())
+    }
+
+    const { data: eligibleDevices } = await devicesQuery
+    const deviceIds = (eligibleDevices ?? []).map((d: { id: string }) => d.id)
+
+    let query = supabase
       .from('schedule_slots')
       .select('*, devices(id, type, number, device_group)')
       .eq('branch_id', branch_id)
@@ -139,6 +164,14 @@ router.get('/schedule', requireClientAuth, async (req: Request, res: Response) =
       .eq('status', 'free')
       .order('time_start', { ascending: true })
 
+    if (deviceIds.length > 0) {
+      query = query.in('device_id', deviceIds)
+    } else if (activeSub?.slot_1_type) {
+      // Нет устройств нужного типа — вернуть пустой список
+      return res.json([])
+    }
+
+    const { data, error } = await query
     if (error) return res.status(500).json({ error: error.message })
     return res.json(data ?? [])
   } catch (e: unknown) {
@@ -205,6 +238,27 @@ router.post('/bookings', requireClientAuth, async (req: Request, res: Response) 
       }
     }
 
+    // Тестовый абонемент нельзя бронировать через ЛК клиента
+    if (sub.is_trial) {
+      return res.status(403).json({ error: 'Тестовый абонемент можно бронировать только через менеджера', code: 'TRIAL_FORBIDDEN' })
+    }
+
+    // Валидация device_group и типа тренажёра
+    const { data: device } = await supabase
+      .from('devices')
+      .select('type, device_group')
+      .eq('id', slot1.device_id)
+      .single()
+
+    if (device) {
+      if (device.device_group === 'B') {
+        return res.status(400).json({ error: 'Нельзя записаться напрямую на финишный тренажёр', code: 'DEVICE_GROUP_B' })
+      }
+      if (device.type !== sub.slot_1_type.toLowerCase()) {
+        return res.status(400).json({ error: `Ваш абонемент предназначен для ${sub.slot_1_type}`, code: 'DEVICE_TYPE_MISMATCH' })
+      }
+    }
+
     const { data: booking, error: bErr } = await supabase
       .from('bookings_v2')
       .insert({
@@ -215,6 +269,7 @@ router.post('/bookings', requireClientAuth, async (req: Request, res: Response) 
         date,
         branch_id,
         created_by: null,
+        status: 'pending',
       })
       .select()
       .single()
@@ -254,7 +309,7 @@ router.delete('/bookings/:id', requireClientAuth, async (req: Request, res: Resp
     if (slotDate) {
       const diffHours = (slotDate.getTime() - Date.now()) / (1000 * 60 * 60)
       if (diffHours < 24) {
-        return res.status(400).json({ error: 'Cannot cancel booking less than 24h before', code: 'TOO_LATE' })
+        return res.status(400).json({ error: 'Бронь нельзя отменить менее чем за 24 часа до начала', code: 'TOO_LATE' })
       }
     }
 

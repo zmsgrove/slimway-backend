@@ -108,6 +108,7 @@ router.post('/', requirePermission('bookings', 'create'), async (req: Request, r
       slot_1_schedule_slot_id,
       slot_2_schedule_slot_id: slot2Id,
       created_by,
+      status: 'confirmed',
     })
     .select()
     .single()
@@ -130,6 +131,84 @@ router.post('/', requirePermission('bookings', 'create'), async (req: Request, r
   }
 
   return res.status(201).json(booking)
+})
+
+// GET /bookings-v2/pending — список pending броней филиала
+router.get('/pending', requirePermission('bookings', 'confirm'), async (req: Request, res: Response) => {
+  try {
+    const branchId = await resolveBranchId(req.user!)
+    if (!branchId) return res.status(400).json({ error: 'No branch', code: 'NO_BRANCH' })
+
+    const { data, error } = await supabase
+      .from('bookings_v2')
+      .select('*, clients(id, full_name, phone), schedule_slots!slot_1_schedule_slot_id(id, date, time_start, time_end, devices(type, number))')
+      .eq('branch_id', branchId)
+      .eq('status', 'pending')
+      .order('created_at', { ascending: true })
+
+    if (error) return res.status(500).json({ error: error.message })
+    return res.json(data ?? [])
+  } catch (e: unknown) {
+    return res.status(500).json({ error: e instanceof Error ? e.message : 'Internal server error' })
+  }
+})
+
+// PATCH /bookings-v2/:id/confirm
+router.patch('/:id/confirm', requirePermission('bookings', 'confirm'), async (req: Request, res: Response) => {
+  try {
+    const { id } = req.params
+    const confirmed_by = req.user!.id
+
+    const { data, error } = await supabase
+      .from('bookings_v2')
+      .update({ status: 'confirmed', confirmed_by, confirmed_at: new Date().toISOString() })
+      .eq('id', id)
+      .select()
+      .single()
+
+    if (error) return res.status(500).json({ error: error.message })
+    return res.json(data)
+  } catch (e: unknown) {
+    return res.status(500).json({ error: e instanceof Error ? e.message : 'Internal server error' })
+  }
+})
+
+// PATCH /bookings-v2/:id/reject
+router.patch('/:id/reject', requirePermission('bookings', 'confirm'), async (req: Request, res: Response) => {
+  try {
+    const { id } = req.params
+
+    const { data: booking } = await supabase
+      .from('bookings_v2')
+      .select('subscription_id, slot_1_schedule_slot_id, slot_2_schedule_slot_id')
+      .eq('id', id)
+      .single()
+
+    if (!booking) return res.status(404).json({ error: 'Booking not found', code: 'NOT_FOUND' })
+
+    await supabase.from('schedule_slots').update({ status: 'free', booking_id: null }).eq('booking_id', id)
+
+    if (booking.subscription_id) {
+      const { data: sub } = await supabase
+        .from('subscriptions')
+        .select('slot_1_sessions_left, slot_2_sessions_left, slot_2_type')
+        .eq('id', booking.subscription_id)
+        .single()
+      if (sub) {
+        const patch: Record<string, number> = { slot_1_sessions_left: (sub.slot_1_sessions_left ?? 0) + 1 }
+        if (booking.slot_2_schedule_slot_id && sub.slot_2_type && sub.slot_2_sessions_left !== null) {
+          patch.slot_2_sessions_left = (sub.slot_2_sessions_left ?? 0) + 1
+        }
+        await supabase.from('subscriptions').update(patch).eq('id', booking.subscription_id)
+      }
+    }
+
+    const { error } = await supabase.from('bookings_v2').update({ status: 'cancelled' }).eq('id', id)
+    if (error) return res.status(500).json({ error: error.message })
+    return res.status(204).send()
+  } catch (e: unknown) {
+    return res.status(500).json({ error: e instanceof Error ? e.message : 'Internal server error' })
+  }
 })
 
 // GET /bookings-v2/:id

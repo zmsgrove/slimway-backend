@@ -19,6 +19,7 @@ export const DEFAULT_PERMISSIONS: Record<string, Record<string, Role[]>> = {
     create:       ['developer','owner','franchisee','admin','staff'],
     cancel_early: ['developer','owner','franchisee','admin','staff'],
     cancel_late:  ['developer','owner','franchisee'],
+    confirm:      ['developer','owner','franchisee'],
   },
   subscriptions: {
     view:   ['developer','owner','franchisee','admin','staff'],

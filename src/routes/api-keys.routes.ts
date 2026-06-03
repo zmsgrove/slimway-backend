@@ -43,11 +43,16 @@ const router = Router()
  *         description: Нет прав
  */
 router.get('/', requirePermission('api_keys', 'manage'), async (req: Request, res: Response) => {
-  const { branch_id } = req.user!
+  const { branch_id, role } = req.user!
+
+  // developer видит raw_key (полный ключ)
+  const selectFields = role === 'developer'
+    ? 'id, name, key_prefix, raw_key, scopes, is_active, last_used_at, expires_at, created_at'
+    : 'id, name, key_prefix, scopes, is_active, last_used_at, expires_at, created_at'
 
   const { data, error } = await supabase
     .from('api_keys')
-    .select('id, name, key_prefix, scopes, is_active, last_used_at, expires_at, created_at')
+    .select(selectFields)
     .eq('branch_id', branch_id ?? '')
     .order('created_at', { ascending: false })
 
@@ -116,6 +121,7 @@ router.post('/', requirePermission('api_keys', 'manage'), async (req: Request, r
       name:       name.trim(),
       key_hash:   hash,
       key_prefix: prefix,
+      raw_key:    raw,
       scopes:     scopes,
       is_active:  true,
       expires_at: expires_at ?? null,

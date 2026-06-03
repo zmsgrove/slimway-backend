@@ -46,7 +46,9 @@ router.post('/', requireRole('owner'), async (req: Request, res: Response) => {
       name,
       slot_1_type, slot_1_duration_min, slot_1_sessions_total,
       slot_2_type, slot_2_duration_min, slot_2_sessions_total,
-      validity_days, price,
+      slot_3_type, slot_3_duration_min, slot_3_sessions_total,
+      slot_4_type, slot_4_duration_min, slot_4_sessions_total,
+      validity_days, price, is_trial,
     } = req.body
 
     if (!name?.trim() || !slot_1_type || !slot_1_duration_min || !slot_1_sessions_total) {
@@ -62,11 +64,22 @@ router.post('/', requireRole('owner'), async (req: Request, res: Response) => {
       validity_days:         validity_days ?? 30,
       price:                 price ?? null,
       is_active:             true,
+      is_trial:              is_trial ?? false,
     }
     if (slot_2_type) {
       payload.slot_2_type            = slot_2_type
       payload.slot_2_duration_min    = slot_2_duration_min ?? null
       payload.slot_2_sessions_total  = slot_2_sessions_total ?? null
+    }
+    if (slot_3_type) {
+      payload.slot_3_type            = slot_3_type
+      payload.slot_3_duration_min    = slot_3_duration_min ?? null
+      payload.slot_3_sessions_total  = slot_3_sessions_total ?? null
+    }
+    if (slot_4_type) {
+      payload.slot_4_type            = slot_4_type
+      payload.slot_4_duration_min    = slot_4_duration_min ?? null
+      payload.slot_4_sessions_total  = slot_4_sessions_total ?? null
     }
 
     const { data, error } = await supabase.from('subscription_templates').insert(payload).select().single()
@@ -81,20 +94,29 @@ router.post('/', requireRole('owner'), async (req: Request, res: Response) => {
 // PATCH /subscription-templates/:id
 router.patch('/:id', requireRole('owner'), async (req: Request, res: Response) => {
   try {
-    const { name, validity_days, price, is_active,
+    const { name, validity_days, price, is_active, is_trial,
             slot_1_type, slot_1_duration_min, slot_1_sessions_total,
-            slot_2_type, slot_2_duration_min, slot_2_sessions_total } = req.body
+            slot_2_type, slot_2_duration_min, slot_2_sessions_total,
+            slot_3_type, slot_3_duration_min, slot_3_sessions_total,
+            slot_4_type, slot_4_duration_min, slot_4_sessions_total } = req.body
     const patch: Record<string, unknown> = {}
     if (name          !== undefined) patch.name          = name
     if (validity_days !== undefined) patch.validity_days = validity_days
     if (price         !== undefined) patch.price         = price
     if (is_active     !== undefined) patch.is_active     = is_active
+    if (is_trial      !== undefined) patch.is_trial      = is_trial
     if (slot_1_type   !== undefined) patch.slot_1_type   = slot_1_type
     if (slot_1_duration_min   !== undefined) patch.slot_1_duration_min   = slot_1_duration_min
     if (slot_1_sessions_total !== undefined) patch.slot_1_sessions_total = slot_1_sessions_total
     if (slot_2_type   !== undefined) patch.slot_2_type   = slot_2_type
     if (slot_2_duration_min   !== undefined) patch.slot_2_duration_min   = slot_2_duration_min
     if (slot_2_sessions_total !== undefined) patch.slot_2_sessions_total = slot_2_sessions_total
+    if (slot_3_type   !== undefined) patch.slot_3_type   = slot_3_type
+    if (slot_3_duration_min   !== undefined) patch.slot_3_duration_min   = slot_3_duration_min
+    if (slot_3_sessions_total !== undefined) patch.slot_3_sessions_total = slot_3_sessions_total
+    if (slot_4_type   !== undefined) patch.slot_4_type   = slot_4_type
+    if (slot_4_duration_min   !== undefined) patch.slot_4_duration_min   = slot_4_duration_min
+    if (slot_4_sessions_total !== undefined) patch.slot_4_sessions_total = slot_4_sessions_total
 
     const { data, error } = await supabase.from('subscription_templates').update(patch).eq('id', req.params.id).select().single()
     if (error) return res.status(500).json({ error: error.message })

@@ -82,12 +82,12 @@ router.post('/generate', requirePermission('employees', 'edit'), async (req: Req
         status = 'absent'
       } else if (s.shift_checkins && s.shift_checkins.length > 0) {
         const checkin = s.shift_checkins[0]
-        if (s.time_start && checkin.checked_in_at) {
+        if (s.time_start && checkin.checkin_at) {
           const scheduledStart = new Date(`${s.date}T${s.time_start}`)
-          const actualStart    = new Date(checkin.checked_in_at)
+          const actualStart    = new Date(checkin.checkin_at)
           const diffMin = (actualStart.getTime() - scheduledStart.getTime()) / 60000
           status = diffMin > 15 ? 'late' : 'present'
-          actual_start = checkin.checked_in_at
+          actual_start = checkin.checkin_at
         } else {
           status = 'present'
         }

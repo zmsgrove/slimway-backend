@@ -312,16 +312,17 @@ router.patch('/:id/role', async (req: Request, res: Response) => {
       return res.status(400).json({ error: 'Invalid role', code: 'VALIDATION_ERROR' })
     }
 
-    // Получаем profile_id сотрудника
+    // Получаем profile_id и branch_id сотрудника
     const { data: emp, error: empErr } = await supabase
       .from('employees')
-      .select('profile_id')
+      .select('profile_id, branch_id')
       .eq('id', id)
       .single()
 
     if (empErr || !emp) return res.status(404).json({ error: 'Employee not found', code: 'NOT_FOUND' })
 
-    const newBranchId = (branch_id && branch_id !== 'null') ? branch_id : null
+    // Если branch_id не передан — оставляем текущий, чтобы не передать null
+    const newBranchId = (branch_id && branch_id !== 'null') ? branch_id : (emp.branch_id ?? null)
 
     // Обновляем auth metadata
     if (emp.profile_id) {

@@ -66,14 +66,16 @@ router.post('/bulk', requireRole('owner', 'franchisee', 'admin'), async (req: Re
     status:     s.status === 'blocked' ? 'blocked' : 'free',
   }))
 
-  // Upsert: on conflict (device_id, date, time_start) — skip
-  const { data, error } = await supabase
+  // Upsert: on conflict (device_id, date, time_start) — skip duplicates silently
+  const { error } = await supabase
     .from('schedule_slots')
     .upsert(rows, { onConflict: 'device_id,date,time_start', ignoreDuplicates: true })
-    .select('id')
 
-  if (error) return res.status(500).json({ error: error.message })
-  return res.status(201).json({ created: (data ?? []).length })
+  if (error) {
+    console.error('[schedule-slots/bulk] upsert error:', error)
+    return res.status(500).json({ error: error.message, code: error.code })
+  }
+  return res.status(201).json({ created: rows.length })
 })
 
 // POST /schedule-slots — создать ячейку

@@ -170,26 +170,55 @@ router.post('/:id/checkin', async (req: Request, res: Response) => {
   try {
     const { id } = req.params
     const branchId = await resolveBranchId(req.user!)
-    const { location, is_own_shift = true } = req.body
+    const { location, geo_lat, geo_lng, checkin_type = 'regular', replaces_employee_id } = req.body
 
     const { data: shift, error: shiftErr } = await supabase
       .from('shifts').select('*').eq('id', id).single()
     if (shiftErr || !shift) return res.status(404).json({ error: 'Shift not found', code: 'NOT_FOUND' })
 
+    // Получаем employee_id текущего пользователя
+    const { data: currentEmp } = await supabase
+      .from('employees')
+      .select('id')
+      .eq('profile_id', req.user!.id)
+      .maybeSingle()
+
+    const isOwnShift = !currentEmp || shift.employee_id === currentEmp.id
+
+    if (!isOwnShift && checkin_type === 'regular') {
+      return res.status(403).json({ error: 'Эта смена не ваша. Укажите тип чекина: replacement или day_off_work', code: 'NOT_OWN_SHIFT' })
+    }
+
+    if (checkin_type === 'replacement' && !replaces_employee_id) {
+      return res.status(400).json({ error: 'replaces_employee_id обязателен для замены', code: 'VALIDATION_ERROR' })
+    }
+
+    const insertPayload: Record<string, unknown> = {
+      shift_id:            id,
+      employee_id:         shift.employee_id,
+      branch_id:           branchId ?? shift.branch_id,
+      checkin_at:          new Date().toISOString(),
+      is_own_shift:        isOwnShift,
+      checkin_type,
+      location:            location ?? null,
+      geo_lat:             geo_lat ?? null,
+      geo_lng:             geo_lng ?? null,
+    }
+
+    if (checkin_type === 'replacement' && replaces_employee_id) {
+      insertPayload.replaces_employee_id = replaces_employee_id
+    }
+
     const { data: checkin, error: checkinErr } = await supabase
       .from('shift_checkins')
-      .insert({
-        shift_id:    id,
-        employee_id: shift.employee_id,
-        branch_id:   branchId ?? shift.branch_id,
-        checkin_at:  new Date().toISOString(),
-        is_own_shift,
-        location:    location ?? null,
-      })
+      .insert(insertPayload)
       .select()
       .single()
 
-    if (checkinErr) return res.status(500).json({ error: checkinErr.message })
+    if (checkinErr) {
+      console.error('[shifts/:id/checkin] insert error:', checkinErr)
+      return res.status(500).json({ error: checkinErr.message })
+    }
 
     await supabase.from('shifts').update({ status: 'active' }).eq('id', id)
 
