@@ -2,6 +2,7 @@ import { Router, Request, Response } from 'express'
 import { randomUUID } from 'crypto'
 import { supabase } from '../config/supabase'
 import { requireClientAuth } from '../middleware/client-auth.middleware'
+import { createNotification } from '../utils/createNotification'
 
 const router = Router()
 
@@ -281,6 +282,25 @@ router.post('/bookings', requireClientAuth, async (req: Request, res: Response) 
     await supabase.from('subscriptions').update({ slot_1_sessions_left: sub.slot_1_sessions_left - 1 }).eq('id', subscription_id)
     if (sub.slot_2_type && slot2Id) {
       await supabase.from('subscriptions').update({ slot_2_sessions_left: (sub.slot_2_sessions_left ?? 1) - 1 }).eq('id', subscription_id)
+    }
+
+    // Notify staff who can confirm bookings
+    const { data: confirmers } = await supabase
+      .from('profiles')
+      .select('id')
+      .eq('branch_id', branch_id)
+      .in('role', ['developer', 'owner', 'franchisee'])
+    if (confirmers) {
+      for (const p of confirmers) {
+        void createNotification({
+          branch_id,
+          profile_id:   p.id as string,
+          type:         'booking.pending',
+          title:        'Новая бронь ожидает подтверждения',
+          related_type: 'booking',
+          related_id:   booking.id as string,
+        })
+      }
     }
 
     return res.status(201).json(booking)

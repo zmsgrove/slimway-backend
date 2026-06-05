@@ -2,6 +2,7 @@ import { Router, Request, Response } from 'express'
 import { supabase } from '../config/supabase'
 import { resolveBranchId } from '../utils/resolveBranchId'
 import { logAction } from '../utils/logAction'
+import { createNotification } from '../utils/createNotification'
 
 const router = Router()
 
@@ -113,6 +114,19 @@ router.post('/', async (req: Request, res: Response) => {
       return res.status(500).json({ error: error.message })
     }
     const result = { ...data, observer_ids: parseObserverIds(data.observer_ids) }
+
+    // Notify assignee
+    if (assigned_to && branchId && assigned_to !== req.user!.id) {
+      void createNotification({
+        branch_id:    branchId,
+        profile_id:   assigned_to as string,
+        type:         'task.assigned',
+        title:        `Задача назначена: ${(title as string).trim()}`,
+        related_type: 'task',
+        related_id:   (data.id as string),
+      })
+    }
+
     return res.status(201).json(result)
   } catch (e: unknown) {
     const msg = e instanceof Error ? e.message : 'Internal server error'

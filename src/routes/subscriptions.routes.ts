@@ -3,6 +3,7 @@ import { supabase } from '../config/supabase'
 import { requirePermission } from '../middleware/permission.middleware'
 import { resolveBranchId } from '../utils/resolveBranchId'
 import { logAction } from '../utils/logAction'
+import { createNotification } from '../utils/createNotification'
 
 const router = Router()
 
@@ -123,6 +124,30 @@ router.post('/', requirePermission('subscriptions', 'create'), async (req: Reque
       .single()
 
     if (error) return res.status(500).json({ error: error.message })
+
+    // Notify franchisee/owner about new subscription sold
+    if (branchId) {
+      const { data: managers } = await supabase
+        .from('profiles')
+        .select('id')
+        .eq('branch_id', branchId)
+        .in('role', ['franchisee', 'owner'])
+      if (managers) {
+        for (const m of managers) {
+          if (m.id !== req.user!.id) {
+            void createNotification({
+              branch_id:    branchId,
+              profile_id:   m.id as string,
+              type:         'subscription.sold',
+              title:        `Продан абонемент: ${name as string}`,
+              related_type: 'subscription',
+              related_id:   data.id as string,
+            })
+          }
+        }
+      }
+    }
+
     return res.status(201).json(data)
   } catch (e: unknown) {
     const msg = e instanceof Error ? e.message : 'Internal server error'

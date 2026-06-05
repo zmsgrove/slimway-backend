@@ -3,6 +3,7 @@ import { supabase } from '../config/supabase'
 import { requirePermission } from '../middleware/permission.middleware'
 import { resolveBranchId } from '../utils/resolveBranchId'
 import { logAction } from '../utils/logAction'
+import { createNotification } from '../utils/createNotification'
 
 const router = Router()
 
@@ -100,6 +101,19 @@ router.post('/', requirePermission('leads', 'create'), async (req: Request, res:
     if (error) {
       console.error('[leads POST /]', error)
       return res.status(500).json({ error: error.message, code: error.code })
+    }
+
+    // Notify assigned profile
+    if (resolvedAssignedTo && branchId) {
+      void createNotification({
+        branch_id:    branchId,
+        profile_id:   resolvedAssignedTo,
+        type:         'lead.assigned',
+        title:        `Лид назначен: ${full_name}`,
+        body:         phone ?? undefined,
+        related_type: 'lead',
+        related_id:   data.id as string,
+      })
     }
 
     // Automation: fire lead_created rules (fire-and-forget style, non-blocking)

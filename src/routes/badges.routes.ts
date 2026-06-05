@@ -40,10 +40,17 @@ router.get('/', async (req: Request, res: Response) => {
         i.min_quantity !== null && i.quantity <= i.min_quantity
     ).length
 
+    const { count: notifications_unread } = await supabase
+      .from('notifications')
+      .select('id', { count: 'exact', head: true })
+      .eq('profile_id', req.user!.id)
+      .eq('is_read', false)
+
     return res.json({
-      leads_new:       leads_new       ?? 0,
-      tasks_overdue:   tasks_overdue   ?? 0,
-      low_stock_items: low_stock_items ?? 0,
+      leads_new:            leads_new            ?? 0,
+      tasks_overdue:        tasks_overdue        ?? 0,
+      low_stock_items:      low_stock_items       ?? 0,
+      notifications_unread: notifications_unread  ?? 0,
     })
   } catch (e: unknown) {
     return res.status(500).json({ error: e instanceof Error ? e.message : 'Internal server error' })

@@ -47,6 +47,7 @@ import { startLeadsCron } from './crons/leads.cron'
 import { startTasksCron } from './crons/tasks.cron'
 import apiKeysRouter from './routes/api-keys.routes'
 import saleRouter from './routes/sale.routes'
+import notificationsRouter from './routes/notifications.routes'
 import swaggerUi from 'swagger-ui-express'
 import { swaggerSpec } from './config/swagger'
 
@@ -160,6 +161,9 @@ app.use('/api/v1/profile', requireAuth, profileRouter)
 
 // MFA routes — без resolveBranch, без MFA-проверки (exempt в middleware)
 app.use('/api/v1/auth/mfa', requireAuth, mfaRouter)
+
+// Notifications — без resolveBranch (уведомления привязаны к profile, не к branch)
+app.use('/api/v1/notifications', requireAuth, notificationsRouter)
 
 // Все API-роуты защищены авторизацией и резолвером филиала
 app.use('/api/v1', requireAuth, resolveBranch)

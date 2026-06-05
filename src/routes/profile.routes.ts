@@ -36,6 +36,21 @@ router.patch('/theme', async (req, res) => {
   return res.json({ ok: true, theme_preference: { theme, accent } })
 })
 
+router.patch('/notification-settings', async (req, res) => {
+  const userId = req.user?.id
+  if (!userId) return res.status(401).json({ error: 'Unauthorized' })
+
+  const { disabledTypes } = req.body as { disabledTypes?: string[] }
+
+  const { error } = await supabase
+    .from('profiles')
+    .update({ notification_settings: { disabledTypes: Array.isArray(disabledTypes) ? disabledTypes : [] } })
+    .eq('id', userId)
+
+  if (error) return res.status(500).json({ error: error.message })
+  return res.json({ ok: true })
+})
+
 router.get('/', async (req, res) => {
   const userId = req.user?.id
   if (!userId) return res.status(401).json({ error: 'Unauthorized' })
