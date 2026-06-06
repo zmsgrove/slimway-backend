@@ -3,6 +3,7 @@ import { randomUUID } from 'crypto'
 import { supabase } from '../config/supabase'
 import { requirePermission } from '../middleware/permission.middleware'
 import { resolveBranchId } from '../utils/resolveBranchId'
+import { isValidUUID } from '../utils/validate'
 
 const router = Router()
 
@@ -10,31 +11,37 @@ const router = Router()
 router.get('/', requirePermission('clients', 'view'), async (req: Request, res: Response) => {
   const { branch_id } = req.user!
   const { search, from, to } = req.query
+  const limit = Math.min(parseInt(req.query.limit as string) || 50, 200)
+  const offset = parseInt(req.query.offset as string) || 0
 
   let query = supabase
     .from('clients')
-    .select('*, memberships(id, status, end_date, used_sessions, total_sessions)')
+    .select('*, memberships(id, status, end_date, used_sessions, total_sessions)', { count: 'exact' })
     .eq('is_deleted', false)
     .order('created_at', { ascending: false })
+    .range(offset, offset + limit - 1)
 
   if (branch_id) query = query.eq('branch_id', branch_id)
   if (search) query = query.ilike('full_name', `%${search}%`)
   if (from) query = query.gte('created_at', `${from as string}T00:00:00`)
   if (to)   query = query.lte('created_at', `${to as string}T23:59:59`)
 
-  const { data, error } = await query
+  const { data, error, count } = await query
 
   if (error) {
     console.error('Supabase error:', error)
     return res.status(500).json({ error: error.message, details: error })
   }
-  return res.json(data)
+  return res.json({ data, total: count ?? 0, limit, offset })
 })
 
 // GET /clients/:id — full detail with history
 router.get('/:id', requirePermission('clients', 'view'), async (req: Request, res: Response) => {
   try {
     const { id } = req.params
+    if (!isValidUUID(id)) {
+      return res.status(400).json({ error: 'Invalid ID format' })
+    }
     const { branch_id } = req.user!
 
     const { data: client, error } = await supabase
@@ -128,6 +135,9 @@ router.post('/', requirePermission('clients', 'create'), async (req: Request, re
 // PATCH /clients/:id
 router.patch('/:id', requirePermission('clients', 'edit'), async (req: Request, res: Response) => {
   const { id } = req.params
+  if (!isValidUUID(id)) {
+    return res.status(400).json({ error: 'Invalid ID format' })
+  }
   const { full_name, phone, email, birth_date, notes, status, tags, source, avatar_url } = req.body
 
   const patch: Record<string, unknown> = {}
@@ -158,6 +168,9 @@ router.patch('/:id', requirePermission('clients', 'edit'), async (req: Request, 
 // DELETE /clients/:id — soft delete
 router.delete('/:id', requirePermission('clients', 'delete'), async (req: Request, res: Response) => {
   const { id } = req.params
+  if (!isValidUUID(id)) {
+    return res.status(400).json({ error: 'Invalid ID format' })
+  }
 
   const { error } = await supabase
     .from('clients')

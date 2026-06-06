@@ -4,6 +4,7 @@ import { requirePermission } from '../middleware/permission.middleware'
 import { resolveBranchId } from '../utils/resolveBranchId'
 import { logAction } from '../utils/logAction'
 import { createNotification } from '../utils/createNotification'
+import { isValidUUID } from '../utils/validate'
 
 const router = Router()
 
@@ -12,20 +13,23 @@ router.get('/', requirePermission('subscriptions', 'view'), async (req: Request,
   try {
     const { branch_id } = req.user!
     const { client_id, status } = req.query
+    const limit = Math.min(parseInt(req.query.limit as string) || 50, 200)
+    const offset = parseInt(req.query.offset as string) || 0
 
     let query = supabase
       .from('subscriptions')
-      .select('*, clients(full_name, phone)')
+      .select('*, clients(full_name, phone)', { count: 'exact' })
       .is('deleted_at', null)
       .order('created_at', { ascending: false })
+      .range(offset, offset + limit - 1)
 
     if (branch_id) query = query.eq('branch_id', branch_id)
     if (client_id) query = query.eq('client_id', client_id as string)
     if (status)    query = query.eq('status', status as string)
 
-    const { data, error } = await query
+    const { data, error, count } = await query
     if (error) return res.status(500).json({ error: error.message })
-    return res.json(data)
+    return res.json({ data, total: count ?? 0, limit, offset })
   } catch (e: unknown) {
     const msg = e instanceof Error ? e.message : 'Internal server error'
     return res.status(500).json({ error: msg })
@@ -36,6 +40,9 @@ router.get('/', requirePermission('subscriptions', 'view'), async (req: Request,
 router.get('/:id', requirePermission('subscriptions', 'view'), async (req: Request, res: Response) => {
   try {
     const { id } = req.params
+    if (!isValidUUID(id)) {
+      return res.status(400).json({ error: 'Invalid ID format' })
+    }
 
     const { data, error } = await supabase
       .from('subscriptions')
@@ -159,6 +166,9 @@ router.post('/', requirePermission('subscriptions', 'create'), async (req: Reque
 router.patch('/:id', requirePermission('subscriptions', 'edit'), async (req: Request, res: Response) => {
   try {
     const { id } = req.params
+    if (!isValidUUID(id)) {
+      return res.status(400).json({ error: 'Invalid ID format' })
+    }
     const { status, date_end, slot_1_sessions_left, slot_2_sessions_left, slot_3_sessions_left, slot_4_sessions_left, cancellation_reason } = req.body
 
     const patch: Record<string, unknown> = {}
@@ -327,6 +337,9 @@ router.post('/:id/transfer', requirePermission('subscriptions', 'edit'), async (
 router.delete('/:id', requirePermission('subscriptions', 'delete'), async (req: Request, res: Response) => {
   try {
     const { id } = req.params
+    if (!isValidUUID(id)) {
+      return res.status(400).json({ error: 'Invalid ID format' })
+    }
 
     const { data: sub, error: subErr } = await supabase
       .from('subscriptions')

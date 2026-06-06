@@ -31,16 +31,14 @@ router.get('/', async (req: Request, res: Response) => {
 // POST /devices — добавить тренажёр
 router.post('/', requireRole('owner', 'franchisee', 'admin'), async (req: Request, res: Response) => {
   try {
-    console.log('POST /devices req.user:', JSON.stringify(req.user))
     let branchId = req.user!.branch_id
 
     if (!branchId) {
-      const { data: branch, error: branchError } = await supabase
+      const { data: branch } = await supabase
         .from('branches')
         .select('id')
         .eq('owner_id', req.user!.id)
         .single()
-      console.log('branch lookup result:', { branch, branchError, userId: req.user!.id })
       branchId = branch?.id || null
     }
 

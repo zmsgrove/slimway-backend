@@ -3,6 +3,7 @@ import cors from 'cors'
 import helmet from 'helmet'
 import morgan from 'morgan'
 import dotenv from 'dotenv'
+import rateLimit from 'express-rate-limit'
 
 import { requireAuth } from './middleware/auth.middleware'
 import { resolveBranch } from './middleware/branch.middleware'
@@ -32,7 +33,7 @@ import profileRouter from './routes/profile.routes'
 import suppliersRouter from './routes/suppliers.routes'
 import badgesRouter from './routes/badges.routes'
 import permissionsRouter from './routes/permissions.routes'
-import mfaRouter from './routes/mfa'
+import mfaRouter from './routes/mfa.routes'
 import promoCodesRouter from './routes/promo-codes.routes'
 import supplierOrdersRouter from './routes/supplier-orders.routes'
 import branchSettingsRouter from './routes/branch-settings.routes'
@@ -69,9 +70,35 @@ app.use(cors({
 app.use(morgan('dev'))
 app.use(express.json())
 
+const globalLimiter = rateLimit({
+  windowMs: 60 * 1000,
+  max: 100,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { error: 'Too many requests, please try again later.' }
+})
+
+const authLimiter = rateLimit({
+  windowMs: 60 * 1000,
+  max: 5,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { error: 'Too many authentication attempts, please try again later.' }
+})
+
+const apiKeyLimiter = rateLimit({
+  windowMs: 60 * 1000,
+  max: 10,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { error: 'Too many API key creation requests.' }
+})
+
+app.use(globalLimiter)
+
 // Health check
 app.get('/health', (_req, res) => {
-  res.json({ status: 'ok', version: '1.0.0' })
+  res.json({ status: 'ok', version: '1.7.5' })
 })
 
 // Swagger UI — публичный, без авторизации
@@ -89,12 +116,11 @@ app.post('/api/tilda-proxy', async (req, res) => {
     fd.append('formid', '2317076783');
     fd.append('formservices[]', '76565d0fb10b1315f77b7c477956d95e');
     fd.append('form-spec-comments', 'Its good');
-var phoneClean = (body.Phone || '').replace(/[^0-9]/g, '');
-fd.append('tildaspec-phone-part[0]-iso', 'KZ');
-fd.append('tildaspec-phone-part[0]', phoneClean);
-fd.set('Phone', phoneClean);
-console.log('Tilda body:', fd.toString());
-const response = await fetch('https://forms.tildaapi.pro/procces/', {
+    const phoneClean = (body.Phone || '').replace(/[^0-9]/g, '');
+    fd.append('tildaspec-phone-part[0]-iso', 'KZ');
+    fd.append('tildaspec-phone-part[0]', phoneClean);
+    fd.set('Phone', phoneClean);
+    const response = await fetch('https://forms.tildaapi.pro/procces/', {
       method: 'POST',
       headers: { 
         'Content-Type': 'application/x-www-form-urlencoded',
@@ -105,7 +131,6 @@ const response = await fetch('https://forms.tildaapi.pro/procces/', {
       body: fd.toString()
     });
     const data = await response.text();
-    console.log('Tilda response:', data);
     return res.json({ ok: true, data });
   } catch (e: any) {
     return res.status(500).json({ error: e.message });
@@ -117,18 +142,15 @@ const response = await fetch('https://forms.tildaapi.pro/procces/', {
 app.post('/api/wazzup-proxy', async (req, res) => {
   try {
     const { phone, message } = req.body
-    console.log('Wazzup request - phone:', phone)
-    
+
     const channelsRes = await fetch('https://api.wazzup24.com/v3/channels', {
       headers: { 'Authorization': `Bearer ${process.env.WAZZUP_API_KEY}` }
     })
     const channelsData = await channelsRes.json() as any[]
-    console.log('Channels:', JSON.stringify(channelsData))
-    
+
     const channel = channelsData.find((c: any) =>
       c.transport === 'whatsapp' && c.state === 'active'
     )
-    console.log('Selected channel:', JSON.stringify(channel))
     
     if (!channel) {
       return res.status(500).json({ error: 'No active WhatsApp channel' })
@@ -148,10 +170,9 @@ app.post('/api/wazzup-proxy', async (req, res) => {
       })
     })
     const msgData = await msgRes.json()
-    console.log('Wazzup response:', JSON.stringify(msgData))
     return res.json({ ok: true, data: msgData })
   } catch (e: any) {
-    console.log('Wazzup error:', e.message)
+    console.error('Wazzup error:', e.message)
     return res.status(500).json({ error: e.message })
   }
 })
@@ -197,6 +218,8 @@ app.use('/api/v1/supplier-orders', supplierOrdersRouter)
 app.use('/api/v1/branch-settings', branchSettingsRouter)
 
 // Client portal — public auth + protected routes (own middleware)
+app.post('/api/client/auth', authLimiter)
+app.post('/api/client/auth/verify', authLimiter)
 app.use('/api/client', clientRouter)
 
 // Public booking page (no auth)
@@ -214,7 +237,8 @@ app.use('/api/v1/automation', automationRouter)
 // Timesheet
 app.use('/api/v1/timesheet', timesheetRouter)
 
-// API Keys
+// API Keys — rate limited POST (key creation)
+app.post('/api/v1/api-keys', apiKeyLimiter)
 app.use('/api/v1/api-keys', apiKeysRouter)
 
 // Sale (cart checkout)

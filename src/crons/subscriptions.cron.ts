@@ -47,7 +47,6 @@ export function startSubscriptionCron(): void {
         await fireAutomationRules(bid, 'subscription_expiring')
       }
 
-      console.log(`[subscriptions cron] Sent ${expiring?.length ?? 0} expiry notifications`)
     } catch (e) {
       console.error('[subscriptions cron] error:', e)
     }

@@ -19,11 +19,14 @@ router.get('/', async (req: Request, res: Response) => {
   try {
     const branchId = await resolveBranchId(req.user!)
     const isPrivileged = PRIVILEGED.includes(req.user!.role)
+    const limit = Math.min(parseInt(req.query.limit as string) || 50, 200)
+    const offset = parseInt(req.query.offset as string) || 0
 
     let query = supabase
       .from('tasks')
-      .select('*')
+      .select('*', { count: 'exact' })
       .order('created_at', { ascending: false })
+      .range(offset, offset + limit - 1)
 
     if (branchId) query = query.eq('branch_id', branchId)
 
@@ -47,7 +50,7 @@ router.get('/', async (req: Request, res: Response) => {
       query = query.or(parts.join(','))
     }
 
-    const { data: tasks, error } = await query
+    const { data: tasks, error, count } = await query
     if (error) {
       console.error('[tasks GET /]', error)
       return res.status(500).json({ error: error.message, code: error.code })
@@ -77,7 +80,7 @@ router.get('/', async (req: Request, res: Response) => {
       checklist_items:  items.filter(i    => i.task_id === t.id),
       comments:         comments.filter(c => c.task_id === t.id),
     }))
-    return res.json(result)
+    return res.json({ data: result, total: count ?? 0, limit, offset })
   } catch (e: unknown) {
     const msg = e instanceof Error ? e.message : 'Internal server error'
     return res.status(500).json({ error: msg })

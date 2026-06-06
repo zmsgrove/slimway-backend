@@ -12,11 +12,14 @@ router.get('/', requirePermission('leads', 'view'), async (req: Request, res: Re
   try {
     const { branch_id } = req.user!
     const { status, archived, from, to } = req.query
+    const limit = Math.min(parseInt(req.query.limit as string) || 50, 200)
+    const offset = parseInt(req.query.offset as string) || 0
 
     let query = supabase
       .from('leads')
-      .select('*, lead_comments(id)')
+      .select('*, lead_comments(id)', { count: 'exact' })
       .order('created_at', { ascending: false })
+      .range(offset, offset + limit - 1)
 
     if (branch_id) query = query.eq('branch_id', branch_id)
 
@@ -30,7 +33,7 @@ router.get('/', requirePermission('leads', 'view'), async (req: Request, res: Re
     if (from) query = query.gte('created_at', `${from as string}T00:00:00`)
     if (to)   query = query.lte('created_at', `${to as string}T23:59:59`)
 
-    const { data, error } = await query
+    const { data, error, count } = await query
     if (error) {
       console.error('[leads GET /]', error)
       return res.status(500).json({ error: error.message, code: error.code })
@@ -49,7 +52,7 @@ router.get('/', requirePermission('leads', 'view'), async (req: Request, res: Re
       ...l,
       assigned_profile: l.assigned_to ? { full_name: profileMap[l.assigned_to] ?? null } : null,
     }))
-    return res.json(enriched)
+    return res.json({ data: enriched, total: count ?? 0, limit, offset })
   } catch (e: unknown) {
     const msg = e instanceof Error ? e.message : 'Internal server error'
     return res.status(500).json({ error: msg })
@@ -263,7 +266,6 @@ router.patch('/:id/status', requirePermission('leads', 'edit'), async (req: Requ
     let clientRecord: { id: string; full_name: string; phone: string | null } | null = null
 
     if (status === 'success' && !lead.client_id) {
-      console.log('[leads PATCH status] status=success, attempting client auto-create for lead:', id, 'full_name:', lead.full_name, 'branch_id:', lead.branch_id)
       try {
         const insertPayload = {
           branch_id: lead.branch_id,
@@ -271,7 +273,6 @@ router.patch('/:id/status', requirePermission('leads', 'edit'), async (req: Requ
           phone:     lead.phone ?? null,
           status:    'draft',
         }
-        console.log('[leads PATCH status] clients INSERT payload:', insertPayload)
 
         const { data: newClient, error: clientErr } = await supabase
           .from('clients')
@@ -280,7 +281,6 @@ router.patch('/:id/status', requirePermission('leads', 'edit'), async (req: Requ
           .single()
 
         if (!clientErr && newClient) {
-          console.log('[leads PATCH status] client created OK:', newClient.id, newClient.full_name)
           newClientId = newClient.id
           clientRecord = { id: newClient.id, full_name: newClient.full_name, phone: newClient.phone }
           updates.client_id = newClientId
@@ -290,8 +290,6 @@ router.patch('/:id/status', requirePermission('leads', 'edit'), async (req: Requ
       } catch (clientEx) {
         console.error('[leads PATCH status] client auto-create exception:', clientEx)
       }
-    } else if (status === 'success' && lead.client_id) {
-      console.log('[leads PATCH status] status=success, client already exists:', lead.client_id)
     }
 
     const { data, error } = await supabase

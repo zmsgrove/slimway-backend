@@ -1,6 +1,5 @@
 import cron from 'node-cron'
 import { supabase } from '../config/supabase'
-import { logAction } from '../utils/logAction'
 
 export function startTasksCron(): void {
   // Daily at 08:00 — spawn new instances of recurring tasks that were completed
@@ -14,19 +13,23 @@ export function startTasksCron(): void {
 
       if (!recurring || recurring.length === 0) return
 
-      for (const task of recurring) {
-        const { data: existing } = await supabase
-          .from('tasks')
-          .select('id')
-          .eq('branch_id', task.branch_id)
-          .eq('title', task.title)
-          .eq('recur_rule', task.recur_rule)
-          .not('status', 'in', '("done","closed")')
-          .maybeSingle()
+      // Fetch all currently active recurring tasks in one query (avoids N+1)
+      const { data: activeCopies } = await supabase
+        .from('tasks')
+        .select('branch_id, title, recur_rule')
+        .not('recur_rule', 'is', null)
+        .not('status', 'in', '("done","closed")')
 
-        if (existing) continue // already an active copy
+      const activeKeys = new Set(
+        (activeCopies ?? []).map(
+          (t: { branch_id: string; title: string; recur_rule: string }) =>
+            `${t.branch_id}|${t.title}|${t.recur_rule}`
+        )
+      )
 
-        await supabase.from('tasks').insert({
+      const toInsert = recurring
+        .filter(task => !activeKeys.has(`${task.branch_id}|${task.title}|${task.recur_rule}`))
+        .map(task => ({
           branch_id:    task.branch_id,
           title:        task.title,
           description:  task.description,
@@ -38,10 +41,13 @@ export function startTasksCron(): void {
           recur_rule:   task.recur_rule,
           related_type: task.related_type,
           related_id:   task.related_id,
-        })
+        }))
+
+      if (toInsert.length > 0) {
+        const { error } = await supabase.from('tasks').insert(toInsert)
+        if (error) console.error('[tasks cron] recurring insert error:', error)
       }
 
-      console.log(`[tasks cron] recurring: processed ${recurring.length} tasks`)
     } catch (e) {
       console.error('[tasks cron] recurring error:', e)
     }
@@ -65,19 +71,19 @@ export function startTasksCron(): void {
 
       if (!tasks || tasks.length === 0) return
 
-      for (const task of tasks) {
-        await logAction({
-          branch_id:   task.branch_id,
-          entity_type: 'task',
-          entity_id:   task.id,
-          action:      'deadline_reminder',
-          actor_id:    'system',
-          actor_name:  'system',
-          details:     { task_title: task.title, assigned_to: task.assigned_to },
-        })
-      }
+      // Batch insert all audit log entries in one query (avoids N+1)
+      const auditEntries = tasks.map(task => ({
+        branch_id:   task.branch_id,
+        entity_type: 'task',
+        entity_id:   task.id,
+        action:      'deadline_reminder',
+        actor_id:    'system',
+        actor_name:  'system',
+        details:     { task_title: task.title, assigned_to: task.assigned_to },
+      }))
+      const { error: auditErr } = await supabase.from('audit_log').insert(auditEntries)
+      if (auditErr) console.error('[tasks cron] deadline audit log error:', auditErr)
 
-      console.log(`[tasks cron] deadline_reminder logged for ${tasks.length} tasks`)
     } catch (e) {
       console.error('[tasks cron] deadline error:', e)
     }
