@@ -130,7 +130,9 @@ app.post('/api/tilda-proxy', async (req, res) => {
       },
       body: fd.toString()
     });
-    const data = await response.text();
+const data = await response.text();
+    console.log('Tilda body sent:', fd.toString());
+    console.log('Tilda response:', data);
     return res.json({ ok: true, data });
   } catch (e: any) {
     return res.status(500).json({ error: e.message });
