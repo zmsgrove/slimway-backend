@@ -31,15 +31,26 @@ router.get('/', async (req: Request, res: Response) => {
 // GET /notifications/unread-count
 router.get('/unread-count', async (req: Request, res: Response) => {
   try {
-    const { count, error } = await supabase
+    const profileId = req.user!.id
+    const branchId  = req.user!.branch_id
+
+    let query = supabase
       .from('notifications')
       .select('id', { count: 'exact', head: true })
-      .eq('profile_id', req.user!.id)
+      .eq('profile_id', profileId)
       .eq('is_read', false)
-    if (error) return res.status(500).json({ error: error.message })
+
+    if (branchId) query = query.eq('branch_id', branchId)
+
+    const { count, error } = await query
+    if (error) {
+      console.error('[notifications /unread-count] supabase error:', error)
+      return res.json({ count: 0 })
+    }
     return res.json({ count: count ?? 0 })
   } catch (e: unknown) {
-    return res.status(500).json({ error: e instanceof Error ? e.message : 'Internal server error' })
+    console.error('[notifications /unread-count] unexpected error:', e)
+    return res.json({ count: 0 })
   }
 })
 
