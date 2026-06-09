@@ -39,13 +39,19 @@ async function _dispatchWebhooks(
 
   await Promise.all(
     endpoints.map((endpoint) =>
-      _deliverWithRetry(endpoint as { id: string; url: string; secret?: string }, event, payload),
+      _deliverWithRetry(
+        endpoint as { id: string; url: string; secret?: string },
+        branchId,
+        event,
+        payload,
+      ),
     ),
   )
 }
 
 async function _deliverWithRetry(
   endpoint: { id: string; url: string; secret?: string },
+  branchId: string,
   event: string,
   payload: Record<string, unknown>,
 ): Promise<void> {
@@ -92,12 +98,14 @@ async function _deliverWithRetry(
       const { error: logErr } = await supabase
         .from('webhook_logs')
         .insert({
-          webhook_endpoint_id: endpoint.id,
-          event,
+          endpoint_id: endpoint.id,
+          branch_id: branchId,
+          event_type: event,
           payload,
           response_status: responseStatus,
           response_body: responseBody,
           attempt,
+          delivered: success,
         })
       if (logErr) {
         console.error('[sendWebhook] failed to write webhook_log:', logErr)

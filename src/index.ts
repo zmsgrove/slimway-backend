@@ -47,6 +47,7 @@ import { startSubscriptionCron } from './crons/subscriptions.cron'
 import { startLeadsCron } from './crons/leads.cron'
 import { startTasksCron } from './crons/tasks.cron'
 import apiKeysRouter from './routes/api-keys.routes'
+import webhooksRouter from './routes/webhooks.routes'
 import saleRouter from './routes/sale.routes'
 import notificationsRouter from './routes/notifications.routes'
 import swaggerUi from 'swagger-ui-express'
@@ -98,7 +99,7 @@ app.use(globalLimiter)
 
 // Health check
 app.get('/health', (_req, res) => {
-  res.json({ status: 'ok', version: '1.7.5' })
+  res.json({ status: 'ok', version: '1.7.7' })
 })
 
 // Swagger UI — публичный, без авторизации
@@ -242,6 +243,9 @@ app.use('/api/v1/timesheet', timesheetRouter)
 // API Keys — rate limited POST (key creation)
 app.post('/api/v1/api-keys', apiKeyLimiter)
 app.use('/api/v1/api-keys', apiKeysRouter)
+
+// Webhooks
+app.use('/api/v1/webhooks', webhooksRouter)
 
 // Sale (cart checkout)
 app.use('/api/v1/sale', saleRouter)

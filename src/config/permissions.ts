@@ -74,6 +74,9 @@ export const DEFAULT_PERMISSIONS: Record<string, Record<string, Role[]>> = {
   api_keys: {
     manage: ['developer','owner','franchisee'],
   },
+  webhooks: {
+    manage: ['developer','owner','franchisee'],
+  },
 }
 
 export interface PermissionOverride {
