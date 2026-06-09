@@ -5,10 +5,9 @@ import { resolveBranchId } from '../utils/resolveBranchId'
 
 const router = Router()
 
-// GET /analytics/overview?branch_ids=id1,id2  (or ?branch_id=id)
+// GET /analytics/overview?branch_ids=id1,id2&from=2024-01-01&to=2024-01-31
 router.get('/overview', requirePermission('analytics', 'view'), async (req: Request, res: Response) => {
   try {
-    // Parse branch IDs: ?branch_ids=a,b,c takes priority over single ?branch_id
     let branchIds: string[] = []
     const branchIdsParam = req.query.branch_ids as string | undefined
     if (branchIdsParam) {
@@ -17,6 +16,10 @@ router.get('/overview', requirePermission('analytics', 'view'), async (req: Requ
       const single = (req.query.branch_id as string) || await resolveBranchId(req.user!)
       if (single) branchIds = [single]
     }
+
+    // Period params (optional date filter for trend data)
+    const fromParam = req.query.from as string | undefined
+    const toParam   = req.query.to   as string | undefined
 
     const today = new Date()
     today.setHours(0, 0, 0, 0)
@@ -74,7 +77,6 @@ router.get('/overview', requirePermission('analytics', 'view'), async (req: Requ
       cntRange('subscriptions', 'date_end', todayIso, in30days, { status: 'active' }),
     ])
 
-    // Visits today
     let visitsToday = 0
     if (branchIds.length > 0) {
       let q = supabase.from('schedule_slots').select('booking_id').eq('date', todayStr).not('booking_id', 'is', null)
@@ -83,7 +85,6 @@ router.get('/overview', requirePermission('analytics', 'view'), async (req: Requ
       visitsToday = slots?.length ?? 0
     }
 
-    // Low stock items
     let lowStockItems = 0
     if (branchIds.length > 0) {
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -94,7 +95,6 @@ router.get('/overview', requirePermission('analytics', 'view'), async (req: Requ
       lowStockItems = (items ?? []).filter((it: any) => it.quantity <= it.min_quantity).length
     }
 
-    // Per-branch breakdown (only when multiple branches)
     interface BranchRow {
       branch_id: string
       branch_name: string
@@ -125,13 +125,20 @@ router.get('/overview', requirePermission('analytics', 'view'), async (req: Requ
       }))
     }
 
-    // Extended charts data
-    // clients_by_month — last 6 months (new clients per month)
+    // Date range for charts: use from/to params if provided, otherwise last 6 months
     const now = new Date()
-    const months6ago = new Date(now.getFullYear(), now.getMonth() - 5, 1).toISOString()
+    const chartFrom = fromParam
+      ? new Date(fromParam + 'T00:00:00').toISOString()
+      : new Date(now.getFullYear(), now.getMonth() - 5, 1).toISOString()
+    const chartTo = toParam
+      ? new Date(toParam + 'T23:59:59').toISOString()
+      : now.toISOString()
+
+    // clients_by_month
     const clientsByMonthData: { clients_by_month: { month: string; count: number }[] } = { clients_by_month: [] }
     if (branchIds.length > 0) {
-      let q = supabase.from('clients').select('created_at').eq('is_deleted', false).gte('created_at', months6ago)
+      let q = supabase.from('clients').select('created_at').eq('is_deleted', false)
+        .gte('created_at', chartFrom).lte('created_at', chartTo)
       q = applyBranch(q) as typeof q
       const { data: clientRows } = await q
       const monthCounts: Record<string, number> = {}
@@ -144,10 +151,12 @@ router.get('/overview', requirePermission('analytics', 'view'), async (req: Requ
         .map(([month, count]) => ({ month, count }))
     }
 
-    // revenue_by_month — last 6 months (subscription price sum per month)
+    // revenue_by_month
     const revenueByMonthData: { revenue_by_month: { month: string; revenue: number }[] } = { revenue_by_month: [] }
     if (branchIds.length > 0) {
-      let q = supabase.from('subscriptions').select('created_at, price').gte('created_at', months6ago).not('price', 'is', null)
+      let q = supabase.from('subscriptions').select('created_at, price')
+        .gte('created_at', chartFrom).lte('created_at', chartTo)
+        .not('price', 'is', null)
       q = applyBranch(q) as typeof q
       const { data: subRows } = await q
       const revMap: Record<string, number> = {}
@@ -175,7 +184,7 @@ router.get('/overview', requirePermission('analytics', 'view'), async (req: Requ
       leadsBySourceData.leads_by_source = Object.entries(srcMap).map(([source, count]) => ({ source, count }))
     }
 
-    // leads_conversion (success / total)
+    // leads_conversion
     let leadsConversion = 0
     if (branchIds.length > 0) {
       const [total, success] = await Promise.all([
@@ -185,7 +194,7 @@ router.get('/overview', requirePermission('analytics', 'view'), async (req: Requ
       leadsConversion = total > 0 ? Math.round((success / total) * 100) : 0
     }
 
-    // avg_ltv — average sum of subscription prices per client
+    // avg_ltv
     let avgLtv = 0
     if (branchIds.length > 0) {
       let q = supabase.from('subscriptions').select('client_id, price').not('price', 'is', null)
@@ -200,12 +209,53 @@ router.get('/overview', requirePermission('analytics', 'view'), async (req: Requ
       avgLtv = vals.length > 0 ? Math.round(vals.reduce((a, b) => a + b, 0) / vals.length) : 0
     }
 
-    // leads_funnel — counts per status
+    // leads_funnel
     const leadsFunnelData: { leads_funnel: { status: string; count: number }[] } = { leads_funnel: [] }
     if (branchIds.length > 0) {
       const funnelStatuses = ['new', 'in_work', 'waiting', 'success', 'fail']
       const funnelCounts = await Promise.all(funnelStatuses.map(s => cnt('leads', { status: s })))
       leadsFunnelData.leads_funnel = funnelStatuses.map((s, i) => ({ status: s, count: funnelCounts[i] }))
+    }
+
+    // visits_by_day, clients_by_day, revenue_by_day — last 7 days sparkline
+    const visitsByDay: number[] = Array(7).fill(0)
+    const clientsByDay: number[] = Array(7).fill(0)
+    const revenueByDay: number[] = Array(7).fill(0)
+    if (branchIds.length > 0) {
+      const days7ago = new Date(today.getTime() - 6 * 86400000)
+      const days7agoStr = days7ago.toISOString().slice(0, 10)
+
+      // visits per day (schedule_slots with booking)
+      let vsq = supabase.from('schedule_slots').select('date').gte('date', days7agoStr).lte('date', todayStr).not('booking_id', 'is', null)
+      vsq = applyBranch(vsq) as typeof vsq
+      const { data: vsData } = await vsq
+      for (const row of vsData ?? []) {
+        const r = row as { date: string }
+        const diff = Math.round((new Date(r.date).getTime() - days7ago.getTime()) / 86400000)
+        if (diff >= 0 && diff < 7) visitsByDay[diff] = (visitsByDay[diff] ?? 0) + 1
+      }
+
+      // clients per day
+      let clq = supabase.from('clients').select('created_at').eq('is_deleted', false)
+        .gte('created_at', days7ago.toISOString()).lte('created_at', todayIso)
+      clq = applyBranch(clq) as typeof clq
+      const { data: clData } = await clq
+      for (const row of clData ?? []) {
+        const r = row as { created_at: string }
+        const diff = Math.round((new Date(r.created_at.slice(0, 10)).getTime() - days7ago.getTime()) / 86400000)
+        if (diff >= 0 && diff < 7) clientsByDay[diff] = (clientsByDay[diff] ?? 0) + 1
+      }
+
+      // revenue per day
+      let rvq = supabase.from('subscriptions').select('created_at, price').not('price', 'is', null)
+        .gte('created_at', days7ago.toISOString()).lte('created_at', todayIso)
+      rvq = applyBranch(rvq) as typeof rvq
+      const { data: rvData } = await rvq
+      for (const row of rvData ?? []) {
+        const r = row as { created_at: string; price: number | null }
+        const diff = Math.round((new Date(r.created_at.slice(0, 10)).getTime() - days7ago.getTime()) / 86400000)
+        if (diff >= 0 && diff < 7) revenueByDay[diff] = (revenueByDay[diff] ?? 0) + (r.price ?? 0)
+      }
     }
 
     return res.json({
@@ -219,6 +269,9 @@ router.get('/overview', requirePermission('analytics', 'view'), async (req: Requ
       active_shifts:               activeShifts,
       low_stock_items:             lowStockItems,
       by_branch:                   byBranch,
+      visits_by_day:               visitsByDay,
+      clients_by_day:              clientsByDay,
+      revenue_by_day:              revenueByDay,
       ...clientsByMonthData,
       ...revenueByMonthData,
       ...leadsBySourceData,
@@ -232,7 +285,7 @@ router.get('/overview', requirePermission('analytics', 'view'), async (req: Requ
   }
 })
 
-// GET /analytics/heatmap — booking frequency by hour × device type for last 30 days
+// GET /analytics/heatmap
 router.get('/heatmap', requirePermission('analytics', 'view'), async (req: Request, res: Response) => {
   try {
     const branchId = await resolveBranchId(req.user!)
@@ -252,7 +305,6 @@ router.get('/heatmap', requirePermission('analytics', 'view'), async (req: Reque
     const { data: slots, error } = await q
     if (error) return res.status(500).json({ error: error.message })
 
-    // Aggregate: { device_type: { hour: count } }
     const matrix: Record<string, Record<string, number>> = {}
     for (const slot of (slots ?? []) as Record<string, unknown>[]) {
       const devType = (slot.devices as { type: string } | null)?.type ?? 'unknown'

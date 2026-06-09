@@ -50,6 +50,7 @@ import apiKeysRouter from './routes/api-keys.routes'
 import webhooksRouter from './routes/webhooks.routes'
 import saleRouter from './routes/sale.routes'
 import notificationsRouter from './routes/notifications.routes'
+import dashboardLayoutsRouter from './routes/dashboard-layouts.routes'
 import swaggerUi from 'swagger-ui-express'
 import { swaggerSpec } from './config/swagger'
 
@@ -219,6 +220,7 @@ app.use('/api/v1/permissions', permissionsRouter)
 app.use('/api/v1/promo-codes', promoCodesRouter)
 app.use('/api/v1/supplier-orders', supplierOrdersRouter)
 app.use('/api/v1/branch-settings', branchSettingsRouter)
+app.use('/api/v1/dashboard-layouts', dashboardLayoutsRouter)
 
 // Client portal — public auth + protected routes (own middleware)
 app.post('/api/client/auth', authLimiter)
