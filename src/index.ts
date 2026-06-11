@@ -23,6 +23,8 @@ import shiftsRouter from './routes/shifts.routes'
 import leadsRouter from './routes/leads.routes'
 import auditLogRouter from './routes/audit-log.routes'
 import tasksRouter from './routes/tasks.routes'
+import taskProjectsRouter from './routes/task-projects.routes'
+import taskColumnsRouter from './routes/task-columns.routes'
 import warehouseRouter from './routes/warehouse.routes'
 import departmentsRouter from './routes/departments.routes'
 import positionsRouter from './routes/positions.routes'
@@ -208,6 +210,8 @@ app.use('/api/v1/shifts', shiftsRouter)
 app.use('/api/v1/leads', leadsRouter)
 app.use('/api/v1/audit-log', auditLogRouter)
 app.use('/api/v1/tasks', tasksRouter)
+app.use('/api/v1/task-projects', taskProjectsRouter)
+app.use('/api/v1/task-columns', taskColumnsRouter)
 app.use('/api/v1/warehouse', warehouseRouter)
 app.use('/api/v1/departments', departmentsRouter)
 app.use('/api/v1/positions', positionsRouter)

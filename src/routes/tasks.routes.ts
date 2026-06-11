@@ -92,7 +92,7 @@ router.post('/', async (req: Request, res: Response) => {
   try {
     const branchId = await resolveBranchId(req.user!)
     if (!branchId) return res.status(400).json({ error: 'No branch', code: 'NO_BRANCH' })
-    const { title, description, priority, status, assigned_to, observer_ids, deadline, related_type, related_id, recur_rule } = req.body
+    const { title, description, priority, status, assigned_to, observer_ids, deadline, related_type, related_id, recur_rule, project_id } = req.body
     if (!title?.trim()) return res.status(400).json({ error: 'title required', code: 'VALIDATION_ERROR' })
     const { data, error } = await supabase
       .from('tasks')
@@ -109,6 +109,7 @@ router.post('/', async (req: Request, res: Response) => {
         related_type: related_type || null,
         related_id:   related_id || null,
         recur_rule:   recur_rule || null,
+        project_id:   project_id || null,
       })
       .select()
       .single()
@@ -177,7 +178,7 @@ router.patch('/:id', async (req: Request, res: Response) => {
         return res.status(403).json({ error: 'Forbidden', code: 'FORBIDDEN' })
       }
     }
-    const allowed = ['title', 'description', 'priority', 'status', 'assigned_to', 'deadline', 'observer_ids', 'related_type', 'related_id', 'recur_rule']
+    const allowed = ['title', 'description', 'priority', 'status', 'assigned_to', 'deadline', 'observer_ids', 'related_type', 'related_id', 'recur_rule', 'project_id']
     const patch: Record<string, unknown> = {}
     for (const key of allowed) {
       if (key in req.body) patch[key] = req.body[key]
@@ -212,7 +213,7 @@ router.delete('/:id', async (req: Request, res: Response) => {
 router.patch('/:id/status', async (req: Request, res: Response) => {
   try {
     const { status } = req.body
-    const valid = ['new', 'today', 'week', 'long', 'done', 'closed', 'pending_close']
+    const valid = ['new', 'today', 'week', 'long', 'done', 'closed', 'pending_close', 'in_progress', 'waiting', 'review', 'cancelled']
     if (!valid.includes(status)) return res.status(400).json({ error: 'Invalid status' })
 
     const { data: task, error: taskErr } = await supabase
@@ -402,4 +403,95 @@ router.post('/:id/comments', async (req: Request, res: Response) => {
   }
 })
 
+// PATCH /tasks/:id/comments/:cid
+router.patch('/:id/comments/:cid', async (req: Request, res: Response) => {
+  try {
+    const { text } = req.body
+    if (!text?.trim()) return res.status(400).json({ error: 'text required' })
+    const { data: comment } = await supabase.from('task_comments').select('author_id').eq('id', req.params.cid).single()
+    if (!comment) return res.status(404).json({ error: 'Not found' })
+    const isPrivileged = PRIVILEGED.includes(req.user!.role)
+    if (!isPrivileged && comment.author_id !== req.user!.id) return res.status(403).json({ error: 'Forbidden' })
+    const { data, error } = await supabase.from('task_comments').update({ text: text.trim() }).eq('id', req.params.cid).select().single()
+    if (error) return res.status(500).json({ error: error.message })
+    return res.json(data)
+  } catch (e: unknown) { return res.status(500).json({ error: e instanceof Error ? e.message : 'ISE' }) }
+})
+router.delete('/:id/comments/:cid', async (req: Request, res: Response) => {
+  try {
+    const { data: comment } = await supabase.from('task_comments').select('author_id').eq('id', req.params.cid).single()
+    if (!comment) return res.status(404).json({ error: 'Not found' })
+    const isPrivileged = PRIVILEGED.includes(req.user!.role)
+    if (!isPrivileged && comment.author_id !== req.user!.id) return res.status(403).json({ error: 'Forbidden' })
+    await supabase.from('task_comments').delete().eq('id', req.params.cid)
+    return res.status(204).send()
+  } catch (e: unknown) { return res.status(500).json({ error: e instanceof Error ? e.message : 'ISE' }) }
+})
+router.post('/:id/observers', async (req: Request, res: Response) => {
+  try {
+    const { profile_id } = req.body
+    if (!profile_id) return res.status(400).json({ error: 'profile_id required' })
+    const { data: task } = await supabase.from('tasks').select('branch_id').eq('id', req.params.id).single()
+    if (!task) return res.status(404).json({ error: 'Not found' })
+    const { data, error } = await supabase.from('task_observers').upsert({ task_id: req.params.id, profile_id, branch_id: task.branch_id }, { onConflict: 'task_id,profile_id' }).select().single()
+    if (error) return res.status(500).json({ error: error.message })
+    return res.status(201).json(data)
+  } catch (e: unknown) { return res.status(500).json({ error: e instanceof Error ? e.message : 'ISE' }) }
+})
+router.delete('/:id/observers/:profileId', async (req: Request, res: Response) => {
+  try {
+    const isPrivileged = PRIVILEGED.includes(req.user!.role)
+    const { data: task } = await supabase.from('tasks').select('created_by').eq('id', req.params.id).single()
+    if (!isPrivileged && req.user!.id !== req.params.profileId && task?.created_by !== req.user!.id) return res.status(403).json({ error: 'Forbidden' })
+    await supabase.from('task_observers').delete().eq('task_id', req.params.id).eq('profile_id', req.params.profileId)
+    return res.status(204).send()
+  } catch (e: unknown) { return res.status(500).json({ error: e instanceof Error ? e.message : 'ISE' }) }
+})
+router.patch('/:id/column', async (req: Request, res: Response) => {
+  try {
+    const { column_id, position } = req.body
+    const { data: task } = await supabase.from('tasks').select('branch_id').eq('id', req.params.id).single()
+    if (!task) return res.status(404).json({ error: 'Not found' })
+    const { data, error } = await supabase.from('task_column_assignments').upsert({ task_id: req.params.id, profile_id: req.user!.id, branch_id: task.branch_id, column_id: column_id ?? null, position: position ?? 0 }, { onConflict: 'task_id,profile_id' }).select().single()
+    if (error) return res.status(500).json({ error: error.message })
+    return res.json(data)
+  } catch (e: unknown) { return res.status(500).json({ error: e instanceof Error ? e.message : 'ISE' }) }
+})
+router.get('/:id/activity', async (req: Request, res: Response) => {
+  try {
+    const { data, error } = await supabase.from('task_activity').select('*, profiles:profile_id(full_name)').eq('task_id', req.params.id).order('created_at', { ascending: false })
+    if (error) return res.status(500).json({ error: error.message })
+    return res.json(data ?? [])
+  } catch (e: unknown) { return res.status(500).json({ error: e instanceof Error ? e.message : 'ISE' }) }
+})
+router.get('/:id/attachments', async (req: Request, res: Response) => {
+  try {
+    const { data, error } = await supabase.from('task_attachments').select('*').eq('task_id', req.params.id).order('created_at', { ascending: false })
+    if (error) return res.status(500).json({ error: error.message })
+    return res.json(data ?? [])
+  } catch (e: unknown) { return res.status(500).json({ error: e instanceof Error ? e.message : 'ISE' }) }
+})
+router.post('/:id/attachments', async (req: Request, res: Response) => {
+  try {
+    const { name, url, size, mime_type } = req.body
+    if (!name?.trim()) return res.status(400).json({ error: 'name required' })
+    const { data: task } = await supabase.from('tasks').select('branch_id').eq('id', req.params.id).single()
+    if (!task) return res.status(404).json({ error: 'Not found' })
+    const { data, error } = await supabase.from('task_attachments').insert({ task_id: req.params.id, branch_id: task.branch_id, name: name.trim(), url: url || null, size: size || null, mime_type: mime_type || null, uploaded_by: req.user!.id }).select().single()
+    if (error) return res.status(500).json({ error: error.message })
+    return res.status(201).json(data)
+  } catch (e: unknown) { return res.status(500).json({ error: e instanceof Error ? e.message : 'ISE' }) }
+})
+router.delete('/:id/attachments/:aid', async (req: Request, res: Response) => {
+  try {
+    await supabase.from('task_attachments').delete().eq('id', req.params.aid).eq('task_id', req.params.id)
+    return res.status(204).send()
+  } catch (e: unknown) { return res.status(500).json({ error: e instanceof Error ? e.message : 'ISE' }) }
+})
+router.delete('/:id/checklists/:item_id', async (req: Request, res: Response) => {
+  try {
+    await supabase.from('task_checklist_items').delete().eq('id', req.params.item_id).eq('task_id', req.params.id)
+    return res.status(204).send()
+  } catch (e: unknown) { return res.status(500).json({ error: e instanceof Error ? e.message : 'ISE' }) }
+})
 export default router
