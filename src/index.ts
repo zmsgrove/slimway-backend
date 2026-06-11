@@ -60,6 +60,7 @@ dotenv.config()
 
 const app = express()
 const PORT = process.env.PORT || 3000
+const startTime = Date.now()
 
 // Базовые middleware
 app.use(helmet())
@@ -102,7 +103,7 @@ app.use(globalLimiter)
 
 // Health check
 app.get('/health', (_req, res) => {
-  res.json({ status: 'ok', version: '1.7.7' })
+  res.json({ status: 'ok', version: '1.8.1', uptime: Math.floor((Date.now() - startTime) / 1000) })
 })
 
 // Swagger UI — публичный, без авторизации
